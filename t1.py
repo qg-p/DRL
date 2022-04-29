@@ -161,8 +161,7 @@ if __name__ == '__main__':
 				key = input()
 				if len(key):
 					try:
-						obs, done = step_primitive(key.encode())
-						r = 0
+						obs, r, done = step_primitive(key.encode())
 						print(
 							'%03d %5.2f'% (action, r),
 							obs.misc[0], obs.misc[1], obs.misc[2]

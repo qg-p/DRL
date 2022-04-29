@@ -120,9 +120,12 @@ def step_primitive(action_seq:bytes):
 	if not (a and b and c):
 		raise Exception('fail to step along'+action_seq.decode())
 	p.obs.recv(getobs.obs)
+	getreward.frcv.recv()
+	getreward.reward = float(cast(getreward.frcv.f.ptr, POINTER(c_float))[0])
 	getdone.frcv.recv()
 	getdone.done = cast(getdone.frcv.f.ptr, POINTER(c_int32))[0]!=0
-	return getobs.obs, getdone.done
+	obs:p.obs.observation = getobs.obs
+	return obs, getreward.reward, getdone.done
 step_primitive.frcv = frame((c_int32*1)(), sizeof((c_int32*1)()))
 step_primitive.fsnd = frame(0, 0, type=Type['primitive_actions'])
 step_primitive.done = False
@@ -137,7 +140,8 @@ def step(action:int):
 	getreward.reward = float(cast(getreward.frcv.f.ptr, POINTER(c_float))[0])
 	getdone.frcv.recv()
 	getdone.done = cast(getdone.frcv.f.ptr, POINTER(c_int32))[0]!=0
-	return getobs.obs, getreward.reward, getdone.done
+	obs:p.obs.observation = getobs.obs
+	return obs, getreward.reward, getdone.done
 ptr = (c_int32*1)()
 step.frcv = frame(ptr, sizeof(ptr))
 step.action = (c_int32*1)()

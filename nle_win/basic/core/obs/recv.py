@@ -24,7 +24,7 @@ class observation(Structure):
 		('tty_cursor'         , c_uint8 * 2),
 		('misc'               , c_int32 * 3)
 	]
-	def __init__(self, *args, **kw) -> None:
+	def __init__(self, *args, **kwargs) -> None:
 		self.glyphs       = (c_short * 79 * 21)()
 		self.chars        = (c_uint8 * 79 * 21)()
 		self.colors       = (c_uint8 * 79 * 21)()
@@ -39,7 +39,7 @@ class observation(Structure):
 		self.tty_colors   = (c_uint8 * 80 * 24)()
 		self.tty_cursor   = (c_uint8 * 2)()
 		self.misc         = (c_int32 * 3)()
-		super().__init__(*args, **kw)
+		super().__init__(*args, **kwargs)
 
 @From(lib)
 @Import('recv_obs')

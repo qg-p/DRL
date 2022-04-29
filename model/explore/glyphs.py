@@ -36,9 +36,10 @@ class glyph_type(enum.IntEnum):
 	trap=18 # except magical trap & vibrating square
 	explosion=19
 	zap_beam=20
-	misc=21
+	no_item=21
+	misc=22
 	def max():
-		return 21
+		return 22
 def _get_descr():
 	n_mon = 381 # 381 types of creature
 	class Descr:
@@ -122,6 +123,7 @@ def _get_descr():
 		(n_mon*8, 'digesting monster'  , glyph_type.monster), # surrounded by gullet
 		(6      , 'warning'            , glyph_type.monster),
 		(n_mon  , 'monster statue'     , glyph_type.tool),
+		(1      , 'empty'              , glyph_type.no_item),
 	)
 	# class Tree: # 线段树？
 	# 	def __init__(self, l_child:Tree=None, r_child:Tree=None):
@@ -165,11 +167,11 @@ class terrain_type(enum.IntEnum):
 	boulder=2 # can be eliminated using spell, tools, etc, can be pushed if is not obstructed
 	monster=1
 	wall=0 # cannot pass through
-_gt = [terrain_type(0)]*glyph_type.max()
+_gt = [terrain_type(0)]*(glyph_type.max()+1)
 _gt[glyph_type.wall]=terrain_type.wall
 _gt[glyph_type.monster]=terrain_type.monster
 _gt[glyph_type.boulder]=terrain_type.boulder
-_gt[glyph_type.food]=_gt[glyph_type.weapon]=_gt[glyph_type.armor]=_gt[glyph_type.amulet]=_gt[glyph_type.tool]=_gt[glyph_type.potion]=_gt[glyph_type.scroll]=_gt[glyph_type.spellbook]=_gt[glyph_type.wand]=_gt[glyph_type.stone]=terrain_type.item
+_gt[glyph_type.food]=_gt[glyph_type.weapon]=_gt[glyph_type.armor]=_gt[glyph_type.ring]=_gt[glyph_type.amulet]=_gt[glyph_type.tool]=_gt[glyph_type.potion]=_gt[glyph_type.scroll]=_gt[glyph_type.spellbook]=_gt[glyph_type.wand]=_gt[glyph_type.stone]=_gt[glyph_type.misc]=_gt[glyph_type.no_item]=terrain_type.item
 _gt[glyph_type.room]=_gt[glyph_type.stair]=terrain_type.room
 _gt[glyph_type.door]=terrain_type.door
 _gt[glyph_type.trap]=_gt[glyph_type.liquid]=_gt[glyph_type.explosion]=_gt[glyph_type.zap_beam]=terrain_type.trap
@@ -196,11 +198,106 @@ def translate_glyph(glyph:int):
 def translate_glyphs(obs:obs):
 	glyphs_21_79 = obs.glyphs
 	glyphs = np.array(glyphs_21_79)
-	a = np.array((c_uint8*79*21*4)())
+	h, w = len(glyphs_21_79), len(glyphs_21_79[0])
+	a = np.array((c_uint8*w*h*4)())
 	for row, row_a in zip(glyphs, zip(a[0], a[1], a[2], a[3])):
 		for i, glyph in enumerate(row):
 			row_a[0][i], row_a[1][i], row_a[2][i], row_a[3][i] = translate_glyph(glyph)
 	return a
+
+def translate_inv(obs:obs):
+	inv_strs_55 = obs.inv_strs
+	inv_glyphs_55 = obs.inv_glyphs
+	inv_oclasses_55 = obs.inv_oclasses
+	inv_size = len(inv_strs_55)
+	from ctypes import string_at
+	class BUC_status(enum.IntEnum):
+		unknown=0
+		uncursed=1
+		cursed=2
+		blessed=3
+	inv_strs = [string_at(inv_strs_55[i]).decode() for i in range(inv_size)]
+	translation = [[0, 0 ,BUC_status(0), 0, 0, glyph_type(0), 0]] * inv_size
+	for i, (strs, glyph, oclass) in enumerate(zip(inv_strs, inv_glyphs_55, inv_oclasses_55)):
+		if len(strs):
+			s = strs.split(' ')
+			count = int(s[0]) if s[0] not in ['a', 'an', 'the'] else 1
+		else:
+			count = 0
+		try:
+			BUC = {
+				'uncursed': BUC_status.uncursed,
+				'cursed'  : BUC_status.cursed,
+				'unholy'  : BUC_status.cursed,
+				'blessed' : BUC_status.blessed,
+				'holy'    : BUC_status.blessed,
+			}[s[1]]
+		except KeyError:
+			BUC = BUC_status.unknown
+
+		no = match_descr(glyph)
+		offset = glyph-_descr[no].start
+		g_type = _descr[no].type
+
+		translation[i] = [
+			int(oclass),
+			count,
+			BUC,
+			no, offset, g_type,
+		]
+	return translation
+def translate_messages_misc(obs:obs):
+	message_256 = obs.message
+	misc_3 = obs.misc
+	from ctypes import string_at
+	message = string_at(message_256).decode()
+	misc = [int(i) for i in misc_3]
+	message_has_more = '--More--' in message
+	translation = [
+		misc[0], # whether a line is required
+		int(message_has_more or misc[1]), # 0 or 1
+		misc[2], # unknown
+		int('? [' in message and ']' in message), # such as 'Really quit? [yn] (n)', 'What do you want to wield? [- a or *?]'
+		int('? [yn' in message), # y/n/q question
+		int('locked' in message), # This door is locked, It turns to be locked, The chest is locked
+	]
+	return translation
+def allowed_char(obs:obs): # e.g. [- abh-CYZ] -> - a b h~C Y Z
+	def letter_index(ch:str): # 0:IsNotLetter, 1-26:a-z, 27-52:A-Z
+		ch = ord(ch)
+		a, z, A, Z = ord('a'), ord('z'), ord('A'), ord('Z')
+		i = 1
+		n = z-a+1
+		if ch>=A and ch<=Z:
+			i += n + ch-A
+		elif ch>=a and ch<=z:
+			i += ch-a
+		else:
+			i -= 1
+		return i
+
+	l = [False] * (26+26+1) # -, a-z, A-Z
+	from ctypes import string_at
+	message = string_at(obs.message)
+	try:
+		start, end = message.index('[')+1, message.index(']')
+	except:
+		return l
+	i = start
+	while i < end:
+		ch = message[i]
+		if ch == '-':
+			_prev, _next = letter_index(message[i-1]), letter_index(message[i+1])
+			if _prev and _next:
+				l[0] = True
+			else:
+				for i in range(_prev, _next+1):
+					l[i] = True
+		else:
+			ch = letter_index(ch)
+			if ch:
+				l[ch] = True
+	return l
 
 if __name__ == '__main__':
 	__main__()

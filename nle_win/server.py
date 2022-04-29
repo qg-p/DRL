@@ -5,8 +5,9 @@ from .basic import frame
 class NLEnv():
 	def __init__(self, env_id='NetHackChallenge-v0', *args, **kwargs) -> None:
 		import nle
+		from nle.env import NLE
 		from .basic.common import observation, reward, done, info
-		self.env = nle.env.gym.make(env_id, *args, **kwargs)
+		self.env:NLE = nle.env.gym.make(env_id, *args, **kwargs)
 		self.observation = observation
 		self.reward = reward
 		self.done = done
@@ -26,13 +27,21 @@ class NLEnv():
 	def __del__(self):
 		self.close()
 	def primitive_step(self, action):
-		_, self.done = self.env.env.step(action) # (strange obs, reward)
-		return _, self.done
-	def update_observation(self):
-		self.observation=self.env._get_observation(self.env.env._obs)
-		return self.observation
+		last_observation = tuple(a.copy() for a in self.env.last_observation)
+		observation, self.done = self.env.env.step(action) # (obs tuple, reward)
+		self.env._steps += 1
+		self.env.last_observation = observation
+		if self.env._check_abort(observation):
+			end_status = self.env.StepStatus.ABORTED
+		else:
+			end_status = self.env._is_episode_end(observation)
+		end_status = self.env.StepStatus(self.done or end_status)
 
-env = NLEnv(character='@', savedir=None)
+		self.reward = float(self.env._reward_fn(last_observation, None, observation, end_status)) # action is not used so it's safe
+		self.observation = self.env._get_observation(observation)
+		return self.observation, self.reward, self.done
+
+env = NLEnv(character='@', savedir=None, penalty_step=-0.01)
 
 # return: whether sent/received successfully
 def errno_check(f:frame, errNo:int)->bool:
@@ -149,9 +158,11 @@ def start():
 			if not errno_check(fsnd, fsnd.send()):
 				raise Exception('fail to send done')
 		elif frcv.type() == Type['primitive_actions']:
+			total_reward = 0
 			try:
 				for action in bytes(frcv.f.ptr[0:len(frcv)]):
-					env.primitive_step(action)
+					_, reward, _ = env.primitive_step(action)
+					total_reward += reward
 				start.ptr_int32_1[0] = 0
 			except:
 				start.ptr_int32_1[0] = -1
@@ -160,8 +171,11 @@ def start():
 			fsnd = frame(ptr=start.ptr_int32_1, ptr_len=sizeof(start.ptr_int32_1), len=sizeof(start.ptr_int32_1), type=Type['Ack'])
 			if not sendn(fsnd):
 				raise Exception("fail to send Ack 2")
-			env.update_observation()
 			p.send_obs(env.observation)
+			start.ptr_float_1[0] = env.reward
+			fsnd = frame(start.ptr_float_1, sizeof(start.ptr_float_1), sizeof(start.ptr_float_1), type=Type['reward'])
+			if not errno_check(fsnd, fsnd.send()):
+				raise Exception('fail to send reward')
 			start.ptr_int32_1[0] = ~0 if env.done else 0
 			fsnd = frame(start.ptr_int32_1, sizeof(start.ptr_int32_1), sizeof(start.ptr_int32_1), type=Type['done'])
 			if not errno_check(fsnd, fsnd.send()):
