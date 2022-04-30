@@ -22,7 +22,7 @@ class Bottleneck(nn.Module):
 		if in_channels != out_channels: # resample via conv 1*1
 			self.resample.append(nn.Conv2d(in_channels, out_channels, 1, groups=in_channels))
 		if any([layer.bn is not None for layer in self.layers]): # do batch-norm if anyone used
-			self.resample.append(nn.BatchNorm2d(out_channels, track_running_stats=True))
+			self.resample.append(nn.BatchNorm2d(out_channels))
 
 		for no, layer in enumerate(self.resample):
 			self.add_module('resampler'+str(no), layer)
@@ -50,7 +50,7 @@ class Conv(Bottleneck):
 	def __init__(self, in_channels:int, out_channels:int, kernel_size:int, fn, groups:int=1, bn:bool=False) -> None:
 		super().__init__([self]) # register
 		self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=kernel_size//2, groups=groups)
-		self.bn = nn.BatchNorm2d(out_channels, track_running_stats=True) if bn else None
+		self.bn = nn.BatchNorm2d(out_channels) if bn else None
 		self.fn = fn
 		self.network = nn.Sequential(self.conv, self.bn, self.fn) if self.bn else nn.Sequential(self.conv, self.fn)
 		self.in_channels = in_channels
@@ -85,14 +85,14 @@ class DQN(nn.Module):
 						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
 						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
 						nn.AvgPool2d(3), # downsample
-						nn.Conv2d(1, 1, 3, padding=1), nn.BatchNorm2d(1, track_running_stats=True), nn.ReLU(inplace=True),
-						nn.Conv2d(1, 1, 3, padding=1), nn.BatchNorm2d(1, track_running_stats=True),
+						nn.Conv2d(1, 1, 3, padding=1), nn.BatchNorm2d(1), nn.ReLU(inplace=True),
+						nn.Conv2d(1, 1, 3, padding=1), nn.BatchNorm2d(1),
 					), # normal(?) CNN
 				], # output: 1 * 2 * 8
 				nn.Sequential( # process map 5 * 5
-					nn.Conv2d(4, 8, 3, padding=1), nn.Sigmoid(), nn.BatchNorm2d(8, track_running_stats=True),
+					nn.Conv2d(4, 8, 3, padding=1), nn.Sigmoid(), nn.BatchNorm2d(8),
 					(Conv(8, 8, 3, nn.ReLU(inplace=True), 1, False) | Conv(8, 8, 3, nn.ReLU(inplace=True), 1, True)).init(),
-					nn.Conv2d(8, 1, 3, padding=1), nn.Sigmoid(), nn.BatchNorm2d(1, track_running_stats=True),
+					nn.Conv2d(8, 1, 3, padding=1), nn.Sigmoid(), nn.BatchNorm2d(1),
 					(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
 					(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
 					(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
@@ -102,8 +102,8 @@ class DQN(nn.Module):
 					(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
 					(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
 					(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
-					nn.Conv2d(1, 1, 3), nn.BatchNorm2d(1, track_running_stats=True), nn.ReLU(),
-					nn.Linear(3, 3), nn.BatchNorm2d(1, track_running_stats=True)
+					nn.Conv2d(1, 1, 3), nn.BatchNorm2d(1), nn.ReLU(),
+					nn.Linear(3, 3), nn.BatchNorm2d(1)
 				),
 				nn.Sequential( # BLSTATS MLP
 					nn.Linear(26, 26), nn.Sigmoid(), # abs. no bn.
@@ -124,7 +124,7 @@ class DQN(nn.Module):
 			),
 			[ # 输出每个动作对应的 Q 值
 				nn.Sequential( # y/n/q
-					nn.Linear(64, 16), nn.ReLU(inplace=True),
+					nn.Linear(64, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
@@ -141,29 +141,29 @@ class DQN(nn.Module):
 					),
 					nn.Sequential( # 联系角色状态、周围和本层地图，生成当前状态下每个物品的表示
 						nn.Linear(64+8, 16), nn.Sigmoid(),
-						nn.Linear(16, 16), nn.BatchNorm1d(16, track_running_stats=True), nn.ReLU(inplace=True),
-						nn.Linear(16, 16), nn.BatchNorm1d(16, track_running_stats=True), nn.ReLU(inplace=True),
-						nn.Linear(16, 4), nn.BatchNorm1d(4, track_running_stats=True), nn.ReLU(inplace=True),
+						nn.Linear(16, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
+						nn.Linear(16, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
+						nn.Linear(16, 4), nn.BatchNorm1d(4), nn.ReLU(inplace=True),
 						nn.Linear(4, 4), nn.ReLU(inplace=True),
 						nn.Linear(4, 4), nn.ReLU(inplace=True),
 						nn.Linear(4, 1)
 					),
 					nn.Sequential( # 考虑多个物品间的联系。物品栏无序故不需检测连续介值的特征
 						nn.Linear(55, 55), nn.Softmax(55),
-						nn.Linear(55, 55), nn.BatchNorm1d(55, track_running_stats=True), nn.ReLU(inplace=True),
+						nn.Linear(55, 55), nn.BatchNorm1d(55), nn.ReLU(inplace=True),
 						nn.Linear(55, 55), nn.ReLU(inplace=True),
-						nn.Linear(55, 55), nn.BatchNorm1d(55, track_running_stats=True), nn.ReLU(inplace=True),
+						nn.Linear(55, 55), nn.BatchNorm1d(55), nn.ReLU(inplace=True),
 						nn.Linear(55, 55), nn.ReLU(inplace=True),
 						nn.Linear(55, 55)
 					),
 				),
 				nn.Sequential( # usual actions
 					nn.Linear(64, 16), nn.Sigmoid(),
-					nn.Linear(16, 16), nn.BatchNorm1d(16, track_running_stats=True), nn.ReLU(inplace=True),
+					nn.Linear(16, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
-					nn.Linear(16, 16), nn.BatchNorm1d(16, track_running_stats=True), nn.ReLU(inplace=True),
+					nn.Linear(16, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
-					nn.Linear(16, 16), nn.BatchNorm1d(16, track_running_stats=True), nn.ReLU(inplace=True),
+					nn.Linear(16, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
 					nn.Linear(16, len(actions_normal))
 				),
 			],
@@ -230,24 +230,36 @@ class DQN(nn.Module):
 		b = b.view([b.shape[0], n]) # [batch_size, 9]
 
 		y:torch.Tensor = torch.cat([a, b, c], axis=1) # 合并
+		if self.training and len(y)==1: self.Q[1].train(False)
 		y = self.Q[1](y) # batch size * 64
+		if self.training: self.Q[1].train(True)
 		return y, (map_4, srdng5x5_4, blstat_26, inv_55_6, misc_6)
 
 	def _forward_ynq_action(self, y_batch:torch.Tensor):
 		''' output: Q(obs)[len(actions_ynq)] '''
+		if self.training and len(y_batch)==1: self.Q[2][0].train(False)
 		z:torch.Tensor = self.Q[2][0](y_batch) # batch size * len(action_ynq)
+		if self.training: self.Q[2][0].train(True)
 		return z
 	def _forward_inv_action(self, y_batch:torch.Tensor, inv_55_6_batch:torch.Tensor):
 		''' output: Q(obs)[len(actions_inv)] '''
+		if self.training and len(y_batch)==1:
+			self.Q[2][1][1].train(False)
+			self.Q[2][1][2].train(False)
 		z = self.Q[2][1][0](inv_55_6_batch)
 		tmp = torch.cat([y_batch]*z.shape[1], axis=1)
 		z = torch.cat([z, tmp], axis=2)
 		z = self.Q[2][1][1](z).squeeze(2) # batch size * 55
 		z:torch.Tensor = self.Q[2][1][2](z)
+		if self.training:
+			self.Q[2][1][1].train(True)
+			self.Q[2][1][2].train(True)
 		return z
 	def _forward_normal_action(self, y_batch:torch.Tensor):
 		''' output: Q(obs)[len(actions_normal)] '''
+		if self.training and len(y_batch)==1: self.Q[2][2].train(False)
 		z:torch.Tensor = self.Q[2][2](y_batch) # batch size * len(actions_normal)
+		if self.training: self.Q[2][2].train(True)
 		return z
 	def forward(self, obs_batch:List[nle.basic.obs.observation]):
 		''' output: max_{action}(Q(obs)[action]) '''
@@ -266,9 +278,10 @@ class DQN(nn.Module):
 		if len(b): b, b_inv = (torch.stack(b), torch.stack(b_inv))
 		if len(c): c = torch.stack(c)
 
-		if len(a): a = self._forward_ynq_action(a)
-		if len(b): b = self._forward_inv_action(b, b_inv)
-		if len(c): c = self._forward_normal_action(c)
+		if len(a): a = self._forward_ynq_action(a) # no batchnorm
+		if len(b): b = self._forward_inv_action(b, b_inv) # has batchnorm
+		if len(c): c = self._forward_normal_action(c) # has batchnorm
+				# c = self._forward_normal_action(torch.cat([c, c]))[0].unsqueeze(0) # has batchnorm
 
 		y = [a, b, c]
 		j = [0, 0, 0]
@@ -279,6 +292,8 @@ class DQN(nn.Module):
 			Q[i] = r
 		return Q
 
+# 三个 actions 序列，重要的是长度和 actions_normal 的内容
+# 修改后需要到 exec_action 检查
 actions_ynq=[ # q(uit), y(es), n(o)
 	None, True, False
 ]
@@ -288,16 +303,28 @@ actions_ynq=[ # q(uit), y(es), n(o)
 actions_inv=['-']+[chr(i) for i in range(ord('a'), ord('z'))]+[chr(i) for i in range(ord('A'), ord('Z'))]+['*', '?']
 actions_normal=[ # normal actions
 	0, 1, 2, 3, 4, 5, 6, 7, # move
-	16, 17, 18, # up, down, wait
-	19, # more
+	16, 17, 75, # up, down, search(wait)
+#	19, # more
 	30, # close (door)
-	38, # esc
+#	38, # esc
 #	39, # fight
 	48, # kick
 #	57, # open (door)
 	61, # pick up
-	75, # search
 ]
+# 限定 actions_normal 中哪些动作可使用，不改变网络结构，作用于 select_action
+# 以免收敛到全程 search 或只做错误动作，训练上百轮 T 还是 1。缓解稀疏奖励。
+actions_normal_allowed=[True]*len(actions_normal)
+def actions_normal_chmod(mode:int,
+	modes:int=[
+		[True]*8+[False]*(len(actions_normal)-8), # just movement*8
+		[True]*8+[True]*3+[False]*(len(actions_normal)-8-3), # movement, up/dn, search
+		[True]*len(actions_normal), # all
+	]
+):
+	allowed = modes[mode] if mode>=0 and mode<len(modes) else []
+	for i, mod in enumerate(allowed): # deep copy
+		actions_normal_allowed[i] = mod
 # actions = actions_ynq + actions_inv + actions_normal
 actions_list = [actions_ynq, actions_inv, actions_normal]
 def action_set_no(misc_6:list):
@@ -305,25 +332,46 @@ def action_set_no(misc_6:list):
 	elif misc_6[4] or misc_6[1]:
 		return 0
 	else: return 2
-def select_action(state:nle.basic.obs.observation, model:DQN, n_ep:int):
+
+def select_action(state:nle.basic.obs.observation, model:DQN, n_ep:int): # 产生 action
 	from explore.glyphs import translate_messages_misc
 	no_action_set = action_set_no(translate_messages_misc(state))
 
-	EPS_START = 1.
-	EPS_END = .05
+	EPS_INCR = 2.
+	EPS_BASE = .1
 	EPS_DECAY = 200
 	from math import exp
-	epsilon = EPS_END + (EPS_START - EPS_END) * exp(-n_ep/EPS_DECAY)
+	epsilon = EPS_BASE + EPS_INCR * exp(-n_ep/EPS_DECAY)
 
 	import random
 	if random.random()<epsilon: # epsilon-greedy
 		actions = actions_list[no_action_set]
-		action = random.randint(0, len(actions)-1)
+		if no_action_set!=2:
+			action = random.randint(0, len(actions)-1)
+		else:
+			n_action = sum(actions_normal_allowed)
+			n_action = random.randint(0, n_action-1)
+			action = 0
+			for i, allowed in enumerate(actions_normal_allowed):
+				if allowed:
+					if n_action:
+						n_action -= 1
+					else:
+						action = i
+						break
 	else:
 		Q = model.forward([state])[0]
 		action = Q.argmax().item()
+		if no_action_set==2 and actions_normal_allowed[action]==False:
+			Qlist = Q.tolist()
+			qmax = None
+			for i, (allowed, q) in enumerate(zip(actions_normal_allowed, Qlist)):
+				if allowed:
+					if qmax is None or qmax<q:
+						qmax = q
+						action = i
+		print('Q predict: %.6f'%(Q[action].item()))
 	return action, no_action_set
-	# raise Exception('not completed')
 def exec_action(action_index:int, no:int):
 	actions = actions_list[no]
 	action = actions[action_index]
@@ -343,6 +391,32 @@ def exec_action(action_index:int, no:int):
 		print('action {} {}\t reward {}'.format(no, primitive, '%.4g'%(reward)))
 	from copy import deepcopy
 	return deepcopy(obs), reward, done
+from replay_memory import Transition
+from typing import List
+def train_batch(batch:List[Transition], train_model:DQN, eval_model:DQN, loss_func, optimizer:torch.optim.Optimizer, gamma:float, device:torch.device):
+	batch_state = [t.state for t in batch]
+	batch_action = [t.action for t in batch]
+	batch_reward = [t.reward for t in batch]
+	batch_next_state = [t.next_state for t in batch]
+
+	non_final_mask = torch.tensor([t is not None for t in batch_next_state])
+	non_final_next_state = [t for t in batch_next_state if t is not None]
+
+	predict = train_model.forward(batch_state)
+	predict = torch.stack([q[a] for q, a in zip(predict, batch_action)]) # shape = [batch size,]
+
+	y = torch.zeros(len(batch)).to(device)
+	if len(non_final_next_state):
+		t = eval_model.forward(non_final_next_state)
+		t = torch.stack([q.max() if s is not None else torch.zeros(1) for q, s in zip(y, batch_next_state)]) # same as predict's shape
+		y[non_final_mask] = t
+	y = y*gamma + torch.tensor(batch_reward).to(device)
+
+	optimizer.zero_grad()
+	loss:torch.Tensor = loss_func(predict, y)
+	loss.backward()
+	optimizer.step()
+	return loss.item()
 def __main__():
 	nle.connect()
 	use_gpu = True
@@ -356,54 +430,49 @@ def __main__():
 
 	gamma = .995
 
-	from replay_memory import replay_memory_serial
-	batch_size = 64
-	memory = replay_memory_serial(batch_size)
+	from replay_memory import replay_memory_windowed_HLR
+	batch_size = 16
+	memory = replay_memory_windowed_HLR(128, 8)
 
 	done = True
 	policy_net = policy_net.train()
 	target_net = target_net.eval()
+
+	actions_normal_chmod(0)
+
 	import time
 	t = time.perf_counter()
-	from copy import deepcopy
 	for n_ep in range(batch_size+500+1):
-		if done:
+		if done: # start of an episode
+			from copy import deepcopy
 			nle.Exec('env.reset()')
 			obs = deepcopy(nle.getobs())
-		if n_ep >= batch_size:
-			if n_ep % 10 == 0:
-				target_net.load_state_dict(policy_net.state_dict())
-				# target_net.eval()
-
+		if n_ep >= batch_size: # replay memory batch
 			batch = memory.sample(batch_size)
-			batch_state = [t.state for t in batch]
-			batch_action = [t.action for t in batch]
-			batch_reward = [t.reward for t in batch]
-			batch_next_state = [t.next_state for t in batch]
-
-			predict = policy_net.forward(batch_state)
-			predict = torch.stack([q[a] for q, a in zip(predict, batch_action)]) # shape = [batch size,]
-
-			y = target_net.forward(batch_next_state)
-			y = torch.stack([q.max() if s is not None else torch.zeros(1) for q, s in zip(y, batch_next_state)]) # same as predict's shape
-			y = y*gamma + torch.tensor(batch_reward).to(device)
-
-			optimizer.zero_grad()
-			loss:torch.Tensor = loss_func(predict, y)
-			loss.backward()
-			optimizer.step()
-			print('epoch %-6d'%(n_ep), loss.to('cpu').detach().tolist())
+			batch_loss = train_batch(batch, policy_net, target_net, loss_func, optimizer, gamma, device)
+			print('epoch %-6d batch_loss: %.8g'%(n_ep, batch_loss))
+		if n_ep % 4 == 0: # sync
+			target_net.load_state_dict(policy_net.state_dict())
 		action_index, no = select_action(obs, target_net, n_ep)
 		last_obs = obs
 		obs, reward, done = exec_action(action_index, no)
-		memory.push(last_obs, action_index, reward, None if done else obs)
-		from nle_win import Exec
-		Exec('env.render()')
+		nle.Exec('env.render()')
+		step_loss = train_batch(
+			[Transition(last_obs, action_index, reward, None if done else obs)],
+			policy_net, target_net, loss_func, optimizer, gamma, device
+		)
+		memory.push(last_obs, action_index, reward, None if done else obs, step_loss)
+		print('epoch %-6d step_loss:  %.8g'%(n_ep, step_loss))
 	t = time.perf_counter()-t
 	try:
 		print('device: {}, time: {} s'.format(torch.cuda.get_device_name(device),t))
 	except:
 		print('time: {} s', t)
 	nle.disconnect()
+	test_input = obs if obs is not None else last_obs
+	test_output = target_net.forward([test_input])[0].to('cpu')
+	from explore.glyphs import translate_messages_misc
+	test_output = [*zip(test_output.tolist(), actions_list[action_set_no(translate_messages_misc(test_input))])]
+	print(test_output)
 if __name__=='__main__':
 	__main__()
