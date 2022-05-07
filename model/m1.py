@@ -18,26 +18,23 @@ class Bottleneck(nn.Module):
 	def init(self):
 		in_channels = self.layers[0].in_channels
 		out_channels = self.layers[len(self.layers)-1].out_channels
-		self.resample = [] # will not be used if is not top-level
+		resample = None # will not be used if is not top-level
 		if in_channels != out_channels: # resample via conv 1*1
-			self.resample.append(nn.Conv2d(in_channels, out_channels, 1)) # , groups=in_channels
-		if any([layer.bn is not None for layer in self.layers]): # do batch-norm if anyone used
-			self.resample.append(nn.BatchNorm2d(out_channels))
+			resample = nn.Conv2d(in_channels, out_channels, 1) # , groups=in_channels
+		self.resample = resample
 
-		for no, layer in enumerate(self.resample):
-			self.add_module('resampler'+str(no), layer)
 		for no, layer in enumerate(self.layers):
 			self.add_module('layer'+str(no), layer) # from nn.Sequential
 
 		return self
-
-	def __or__(self, rhv):
+	from typing_extensions import Self
+	def __or__(self, rhv:Self):
 		retv = Bottleneck(self.layers + rhv.layers)
 		return retv
 	def forward(self, x:torch.Tensor):
 		res = x.clone() # residual
-		for resample in self.resample:
-			res = resample(res) # resampled residual
+		if self.resample is not None:
+			res = self.resample(res) # resampled residual
 
 		y = x
 		for layer in self.layers:
@@ -47,12 +44,11 @@ class Bottleneck(nn.Module):
 		return y
 class Conv(Bottleneck):
 	# auto padding
-	def __init__(self, in_channels:int, out_channels:int, kernel_size:int, fn, groups:int=1, bn:bool=False) -> None:
+	def __init__(self, in_channels:int, out_channels:int, kernel_size:int, fn, groups:int=1) -> None:
 		super().__init__([self]) # register
 		self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=kernel_size//2, groups=groups)
-		self.bn = nn.BatchNorm2d(out_channels) if bn else None
 		self.fn = fn
-		self.network = nn.Sequential(self.conv, self.bn, self.fn) if self.bn else nn.Sequential(self.conv, self.fn)
+		self.network = nn.Sequential(self.conv, self.fn)
 		self.in_channels = in_channels
 		self.out_channels = out_channels
 
@@ -68,44 +64,44 @@ class DQN(nn.Module):
 				[ # seq, process map 4(channels) * 21 * 79
 					nn.Sequential(
 						nn.Conv2d(4, 64, 1), nn.Sigmoid(), # all grids are considered same
-						(Conv(64, 64, 1, nn.ReLU(inplace=True), 1, False) | Conv(64, 64, 1, nn.ReLU(inplace=True), 16, False)).init(),
-						(Conv(64, 64, 1, nn.ReLU(inplace=True), 1, False) | Conv(64, 64, 1, nn.ReLU(inplace=True), 16, True)).init(),
-						(Conv(64, 64, 1, nn.ReLU(inplace=True), 1, False) | Conv(64, 16, 1, nn.ReLU(inplace=True), 16, False)).init(),
-						(Conv(16, 16, 1, nn.ReLU(inplace=True), 1, False) | Conv(16, 16, 1, nn.ReLU(inplace=True), 16, True)).init(),
-						(Conv(16, 16, 1, nn.ReLU(inplace=True), 1, False) | Conv(16, 16, 1, nn.ReLU(inplace=True), 16, False)).init(),
-						(Conv(16, 16, 1, nn.ReLU(inplace=True), 1, False) | Conv(16, 4, 1, nn.ReLU(inplace=True), 4, True)).init(),
-						(Conv(4, 4, 1, nn.ReLU(inplace=True), 1, False) | Conv(4, 4, 1, nn.ReLU(inplace=True), 4, False)).init(),
-						(Conv(4, 4, 1, nn.ReLU(inplace=True), 1, False) | Conv(4, 4, 1, nn.ReLU(inplace=True), 4, True)).init(),
+						(Conv(64, 64, 1, nn.ReLU(inplace=True), 1) | Conv(64, 64, 1, nn.ReLU(inplace=True), 16)).init(),
+						(Conv(64, 64, 1, nn.ReLU(inplace=True), 1) | Conv(64, 64, 1, nn.ReLU(inplace=True), 16)).init(),
+						(Conv(64, 64, 1, nn.ReLU(inplace=True), 1) | Conv(64, 16, 1, nn.ReLU(inplace=True), 16)).init(),
+						(Conv(16, 16, 1, nn.ReLU(inplace=True), 1) | Conv(16, 16, 1, nn.ReLU(inplace=True), 16)).init(),
+						(Conv(16, 16, 1, nn.ReLU(inplace=True), 1) | Conv(16, 16, 1, nn.ReLU(inplace=True), 16)).init(),
+						(Conv(16, 16, 1, nn.ReLU(inplace=True), 1) | Conv(16, 4, 1, nn.ReLU(inplace=True), 4)).init(),
+						(Conv(4, 4, 1, nn.ReLU(inplace=True), 1) | Conv(4, 4, 1, nn.ReLU(inplace=True), 4)).init(),
+						(Conv(4, 4, 1, nn.ReLU(inplace=True), 1) | Conv(4, 4, 1, nn.ReLU(inplace=True), 4)).init(),
 					), # resnet, preprocess
 					nn.Sequential(
 						nn.Conv2d(4, 1, 3, padding=1), nn.ReLU(inplace=True),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
 						# nn.MaxPool2d(3), # extract 'feature' such as corner, door, lava pool, etc
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
 						# nn.AvgPool2d(3), # downsample
-						nn.Conv2d(1, 1, 3, padding=1), nn.BatchNorm2d(1), nn.ReLU(inplace=True),
-						nn.Conv2d(1, 1, 3, padding=1), nn.BatchNorm2d(1),
+						nn.Conv2d(1, 1, 3, padding=1), nn.ReLU(inplace=True),
+						nn.Conv2d(1, 1, 3, padding=1),
 					), # normal(?) CNN
 				], # output: 1 * 21 * 79 ## output: 1 * 2 * 8
 				[
 					nn.Sequential( # process map 5 * 5
-						nn.Conv2d(4, 8, 3, padding=1), nn.Sigmoid(), nn.BatchNorm2d(8),
-						(Conv(8, 8, 3, nn.ReLU(inplace=True), 1, False) | Conv(8, 8, 3, nn.ReLU(inplace=True), 1, True)).init(),
-						nn.Conv2d(8, 1, 3, padding=1), nn.Sigmoid(), nn.BatchNorm2d(1),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
-						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, False) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1, True)).init(),
+						nn.Conv2d(4, 8, 3, padding=1), nn.Sigmoid(),
+						(Conv(8, 8, 3, nn.ReLU(inplace=True), 1) | Conv(8, 8, 3, nn.ReLU(inplace=True), 1)).init(),
+						nn.Conv2d(8, 1, 3, padding=1), nn.Sigmoid(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
+						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
 					),
 					nn.Sequential(
-						nn.Conv2d(1, 1, 3), nn.BatchNorm2d(1), nn.ReLU(),
+						nn.Conv2d(1, 1, 3), nn.ReLU(),
 						nn.Flatten(1), nn.Linear(9, 9)
 					)
 				],
@@ -119,16 +115,16 @@ class DQN(nn.Module):
 				),
 			),
 			nn.Sequential(
-				nn.Linear(21*79+9+16, 64), nn.BatchNorm1d(64), nn.ReLU(inplace=True),
+				nn.Linear(21*79+9+16, 64), nn.ReLU(inplace=True),
 				nn.Linear(64, 64), nn.ReLU(inplace=True),
 				nn.Linear(64, 64), nn.ReLU(inplace=True),
 				nn.Linear(64, 64), nn.ReLU(inplace=True),
-				nn.Linear(64, 64), nn.BatchNorm1d(64), nn.ReLU(inplace=True),
+				nn.Linear(64, 64), nn.ReLU(inplace=True),
 				nn.Linear(64, 64), nn.ReLU(inplace=True)
 			),
 			[ # 输出每个动作对应的 Q 值
 				nn.Sequential( # y/n/q
-					nn.Linear(64, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
+					nn.Linear(64, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
@@ -145,29 +141,29 @@ class DQN(nn.Module):
 					),
 					nn.Sequential( # 联系角色状态、周围和本层地图，生成当前状态下每个物品的表示
 						nn.Linear(64+8, 16), nn.Sigmoid(),
-						nn.Linear(16, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
-						nn.Linear(16, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
-						nn.Linear(16, 4), nn.BatchNorm1d(4), nn.ReLU(inplace=True),
+						nn.Linear(16, 16), nn.ReLU(inplace=True),
+						nn.Linear(16, 16), nn.ReLU(inplace=True),
+						nn.Linear(16, 4), nn.ReLU(inplace=True),
 						nn.Linear(4, 4), nn.ReLU(inplace=True),
 						nn.Linear(4, 4), nn.ReLU(inplace=True),
 						nn.Linear(4, 1)
 					),
 					nn.Sequential( # 考虑多个物品间的联系。物品栏无序故不需检测连续介值的特征
 						nn.Linear(55, 55), nn.Softmax(55),
-						nn.Linear(55, 55), nn.BatchNorm1d(55), nn.ReLU(inplace=True),
 						nn.Linear(55, 55), nn.ReLU(inplace=True),
-						nn.Linear(55, 55), nn.BatchNorm1d(55), nn.ReLU(inplace=True),
+						nn.Linear(55, 55), nn.ReLU(inplace=True),
+						nn.Linear(55, 55), nn.ReLU(inplace=True),
 						nn.Linear(55, 55), nn.ReLU(inplace=True),
 						nn.Linear(55, 55)
 					),
 				),
 				nn.Sequential( # usual actions
 					nn.Linear(64, 16), nn.Sigmoid(),
-					nn.Linear(16, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
-					nn.Linear(16, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
-					nn.Linear(16, 16), nn.BatchNorm1d(16), nn.ReLU(inplace=True),
+					nn.Linear(16, 16), nn.ReLU(inplace=True),
+					nn.Linear(16, 16), nn.ReLU(inplace=True),
+					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, len(actions_normal))
 				),
 			],
@@ -231,36 +227,36 @@ class DQN(nn.Module):
 		b = b.flatten(1) # [batch_size, 9]
 
 		y:torch.Tensor = torch.cat([a, b, c], axis=1) # 合并
-		if self.training and len(y)==1: self.Q[1].train(False)
+		# if self.training and len(y)==1: self.Q[1].train(False)
 		y = self.Q[1](y) # batch size * 64
-		if self.training: self.Q[1].train(True)
+		# if self.training: self.Q[1].train(True)
 		return y, (map_4, srdng5x5_4, blstat_26, inv_55_6, misc_6)
 
 	def _forward_ynq_action(self, y_batch:torch.Tensor):
 		''' output: Q(obs)[len(actions_ynq)] '''
-		if self.training and len(y_batch)==1: self.Q[2][0].train(False)
+		# if self.training and len(y_batch)==1: self.Q[2][0].train(False)
 		z:torch.Tensor = self.Q[2][0](y_batch) # batch size * len(action_ynq)
-		if self.training: self.Q[2][0].train(True)
+		# if self.training: self.Q[2][0].train(True)
 		return z
 	def _forward_inv_action(self, y_batch:torch.Tensor, inv_55_6_batch:torch.Tensor):
 		''' output: Q(obs)[len(actions_inv)] '''
-		if self.training and len(y_batch)==1:
-			self.Q[2][1][1].train(False)
-			self.Q[2][1][2].train(False)
+		# if self.training and len(y_batch)==1:
+		# 	self.Q[2][1][1].train(False)
+		# 	self.Q[2][1][2].train(False)
 		z = self.Q[2][1][0](inv_55_6_batch)
 		tmp = torch.cat([y_batch]*z.shape[1], axis=1)
 		z = torch.cat([z, tmp], axis=2)
 		z = self.Q[2][1][1](z).squeeze(2) # batch size * 55
 		z:torch.Tensor = self.Q[2][1][2](z)
-		if self.training:
-			self.Q[2][1][1].train(True)
-			self.Q[2][1][2].train(True)
+		# if self.training:
+		# 	self.Q[2][1][1].train(True)
+		# 	self.Q[2][1][2].train(True)
 		return z
 	def _forward_normal_action(self, y_batch:torch.Tensor):
 		''' output: Q(obs)[len(actions_normal)] '''
-		if self.training and len(y_batch)==1: self.Q[2][2].train(False)
+		# if self.training and len(y_batch)==1: self.Q[2][2].train(False)
 		z:torch.Tensor = self.Q[2][2](y_batch) # batch size * len(actions_normal)
-		if self.training: self.Q[2][2].train(True)
+		# if self.training: self.Q[2][2].train(True)
 		return z
 	def forward(self, obs_batch:List[nle.basic.obs.observation]):
 		''' output: max_{action}(Q(obs)[action]) '''
@@ -450,19 +446,17 @@ def train_batch(batch:List[Transition], train_model:DQN, eval_model:DQN, loss_fu
 		t = eval_model.forward(non_final_next_state)
 		# t = torch.stack([q.max() if s is not None else torch.zeros(1) for q, s in zip(y, batch_next_state)]) # same as predict's shape
 		t = torch.stack([q.max() for q in t])
-		try:
-			y[non_final_mask] = t
-		except:
-			raise
+		y[non_final_mask] = t
 	y = y*gamma + torch.tensor(batch_reward).to(device)
-	# print('predict:\n{}\ny:\n{}'.format(predict, y))
+	eval_predict = torch.stack([q[a] for q, a in zip(eval_model.forward(batch_state), batch_action)])
+	print('{}\n{}\n{}\n{}'.format(predict.detach(), eval_predict.detach(), y.detach(), torch.tensor(batch_reward)))
 
 	optimizer.zero_grad()
 	loss:torch.Tensor = loss_func(predict, y)
 	loss.backward()
 	optimizer.step()
 	return loss.item()
-def __main__(*, step_fun=None, use_gpu=False, num_epoch=517, gamma=.995, lr=.01, batch_size=16, memory_sample, memory_push):
+def __main__(*, step_fun=None, use_gpu=False, num_epoch=517, gamma=.995, lr=.01, batch_size=16, memory_sample, memory_push, batch_start:int=0, T_sync:int=10):
 	nle.connect()
 	device = torch.device('cuda' if use_gpu and torch.cuda.is_available() else 'cpu')
 	policy_net = DQN(device)
@@ -488,7 +482,7 @@ def __main__(*, step_fun=None, use_gpu=False, num_epoch=517, gamma=.995, lr=.01,
 			obs = deepcopy(nle.getobs())
 		nle.Exec('env.render()')
 
-		if n_ep % 4 == 0: # sync
+		if n_ep % T_sync == 0: # sync
 			target_net.load_state_dict(policy_net.state_dict())
 
 		action_index, no = select_action(obs, target_net, n_ep)
@@ -503,7 +497,7 @@ def __main__(*, step_fun=None, use_gpu=False, num_epoch=517, gamma=.995, lr=.01,
 		memory_push(last_obs, action_index, reward, None if done else obs, step_loss)
 		print('epoch %-6d step_loss:  %.8g'%(n_ep, step_loss))
 
-		if n_ep < batch_size: # replay memory batch
+		if n_ep < batch_start: # replay memory batch
 			continue
 		batch = memory_sample(batch_size)
 		batch_loss = train_batch(batch, policy_net, target_net, loss_func, optimizer, gamma, device)
@@ -552,8 +546,12 @@ def main():
 		return memory.push(last_obs, action_index, reward, obs, step_loss)
 	def memory_sample(batch_size:int):
 		return memory.sample(batch_size)
+	def step(n_ep, *args, **kwargs):
+		import time
+		if n_ep>40:
+			time.sleep(10)
 
-	__main__(use_gpu=use_gpu, memory_sample=memory_sample, memory_push=memory_push, num_epoch=500, batch_size=64, lr=0.01, gamma=0.995)
+	__main__(step_fun=step, use_gpu=use_gpu, memory_sample=memory_sample, memory_push=memory_push, num_epoch=500, batch_size=4, lr=0.01, gamma=0.995, batch_start=4*8, T_sync=1)
 
 if __name__=='__main__':
 	main()
