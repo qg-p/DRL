@@ -146,7 +146,7 @@ if __name__ == '__main__':
 	from t0 import EXEC
 	connect()
 	print('start')
-	EXEC('env = NLEnv(character="@", savedir=0)')
+	EXEC('env = NLEnv(character="@", savedir=None)')
 	EXEC('env.reset()')
 	obs = getobs()
 	done = False
