@@ -1,6 +1,6 @@
 # test batch server & client
 if __name__ == '__main__':
-	from nle_win.batch_nle import connect, disconnect, EXEC, batch
+	from nle_win.batch_nle import connect, disconnect, EXEC, batch, terminate
 	connect()
 	env = batch(1, 'character="Val-Hum-Fem-Law", savedir=None, penalty_step=-0.01')
 	print('start')

@@ -60,6 +60,8 @@ def disconnect():
 
 def terminate():
 	EXEC('terminate()')
+	p.bytes.closePipe(1)
+	p.bytes.closePipe(0)
 
 if __name__ == '__main__':
 	connect()

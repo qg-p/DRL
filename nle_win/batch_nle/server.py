@@ -41,8 +41,12 @@ utilize:
 def terminate():
 	start.Terminate = True
 	terminate.Terminate = True
-	from os import system
-	if system("rm -r "+init.fifodir): raise Exception('fail to rm -r '+init.fifodir)
+	from os import system, listdir
+	cmd = "rm {} {}".format(main.p_a, main.p_b)
+	if system(cmd): raise Exception('fail to '+cmd)
+	if listdir(init.fifodir)==0:
+		cmd = "rm -r "+init.fifodir
+		if system(cmd): raise Exception('fail to '+cmd)
 
 def init():
 	start.Terminate = True
@@ -55,7 +59,12 @@ def init():
 	if not path.isdir(init.fifodir):
 		if system("mkdir "+init.fifodir):
 			raise Exception('fail to mkdir '+init.fifodir)
-		if system("mkfifo %s %s" % (main.p_a, main.p_b)):
+	fifos = ''
+	for fifo in (main.p_a, main.p_b):
+		if not path.exists(fifo):
+			fifos += ' '+fifo
+	if len(fifos):
+		if system("mkfifo"+fifo):
 			raise Exception('fail to mkfifo in '+init.fifodir)
 
 def start():
@@ -128,6 +137,7 @@ def main():
 			print('restart', cnt)
 		try:
 			start()
+			p.bytes.frame(ptr_len=0).recv() # block
 		except:
 			from traceback import print_exc
 			print(print_exc())

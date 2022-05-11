@@ -57,10 +57,9 @@ class Conv(Bottleneck):
 		y = self.network(x)
 		return y
 class DQN(nn.Module):
-	def __init__(self, device, use_LSTM:bool=False) -> None:
+	def __init__(self, device) -> None:
 		super().__init__()
 		self.device = device
-		self.use_LSTM = use_LSTM
 		self.Q = [ # List 表示顺序，Tuple 表示并列
 			(
 				[ # seq, process map 4(channels) * 21 * 79
@@ -116,16 +115,13 @@ class DQN(nn.Module):
 					nn.Linear(16, 16),
 				),
 			),
-			(
-				nn.Sequential(
-					nn.Linear(21*79+9+16, 64), nn.ReLU(inplace=True),
-					nn.Linear(64, 64), nn.ReLU(inplace=True),
-					nn.Linear(64, 64), nn.ReLU(inplace=True),
-					nn.Linear(64, 64), nn.ReLU(inplace=True),
-					nn.Linear(64, 64), nn.ReLU(inplace=True),
-					nn.Linear(64, 64), nn.ReLU(inplace=True)
-				),
-				# nn.LSTM(64, 64, batch_first=True, num_layers=1, bias=True, bidirectional=False)
+			nn.Sequential(
+				nn.Linear(21*79+9+16, 64), nn.ReLU(inplace=True),
+				nn.Linear(64, 64), nn.ReLU(inplace=True),
+				nn.Linear(64, 64), nn.ReLU(inplace=True),
+				nn.Linear(64, 64), nn.ReLU(inplace=True),
+				nn.Linear(64, 64), nn.ReLU(inplace=True),
+				nn.Linear(64, 64), nn.ReLU(inplace=True)
 			),
 			[ # 输出每个动作对应的 Q 值
 				nn.Sequential( # y/n/q
@@ -195,7 +191,7 @@ class DQN(nn.Module):
 			map_batch = [None] * batch_size
 			surroundings_batch = [None] * batch_size
 			blstats_batch = [None] * batch_size
-			misc_batch = [None] * batch_size
+			misc_batch = [[0]] * batch_size
 			inv_batch = [None] * batch_size
 
 			from explore.glyphs import translate_messages_misc, translate_inv
@@ -263,10 +259,7 @@ class DQN(nn.Module):
 		z:torch.Tensor = self.Q[2][2](y_batch) # batch size * len(actions_normal)
 		# if self.training: self.Q[2][2].train(True)
 		return z
-	def forward(self, obs_batch:List[nle.basic.obs.observation]):
-		''' output: max_{action}(Q(obs)[action]) '''
-		y, (_, _, _, inv_55_6, misc_6) = self._forward_y(obs_batch)
-
+	def _forward_actions(self, y:torch.Tensor, inv_55_6:torch.Tensor, misc_6:List[List[int]]):
 		no_action_set = [action_set_no(misc) for misc in misc_6]
 		a, b, b_inv, c = [], [], [], []
 		for misc_i, y_i, inv_i in zip(no_action_set, y, inv_55_6):
@@ -287,11 +280,16 @@ class DQN(nn.Module):
 
 		y = [a, b, c]
 		j = [0, 0, 0]
-		Q = [torch.zeros(1)] * len(obs_batch)
+		Q = [torch.zeros(1)] * len(misc_6)
 		for i, misc in enumerate(no_action_set):
 			r = y[misc][j[misc]]
 			j[misc] += 1
 			Q[i] = r
+		return Q
+	def forward(self, obs_batch:List[nle.basic.obs.observation]):
+		''' output: max_{action}(Q(obs)[action]) '''
+		y, (_, _, _, inv_55_6, misc_6) = self._forward_y(obs_batch)
+		Q = self._forward_actions(y, inv_55_6, misc_6)
 		return Q
 
 	def save(self, filename:str):
