@@ -8,22 +8,17 @@ char Filename[256]="pipe";
 void _closePipe(bool);
 extern "C" void closePipe() {_closePipe(true);}
 static struct Stat {
-	static int n_call_close;
 	Stat() {}
 	~Stat() {
-		if (n_call_close>10)
-			printf("%d fclose\n", n_call_close);
 		_closePipe(false);
 	}
 } stat;
-int Stat::n_call_close=0;
 void _closePipe(bool verbose) {
 	if (!fp) {
 		if (verbose)
 			printf("%s(%d)|%s:\t\'%s\' is already closed\n", __FILE__, __LINE__, __func__, Filename);
 		return;
 	}
-	Stat::n_call_close++;
 	fclose(fp);
 	fp=0;
 	fd=0;

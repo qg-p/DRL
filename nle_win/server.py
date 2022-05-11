@@ -27,10 +27,20 @@ class NLEnv():
 	def __del__(self):
 		self.close()
 	def primitive_step(self, action):
+		# from: https://github.com/facebookresearch/nle/blob/f4f750af3cb07c095869c36a9bc1994edf438aa1/nle/env/base.py#L337
+		# time: 2022/5/11 (latest)
 		last_observation = tuple(a.copy() for a in self.env.last_observation)
-		observation, self.done = self.env.env.step(action) # (obs tuple, reward)
+
+		observation, done = self.env.env.step(action) # (obs tuple, reward)
+		is_game_over = observation[self.env._program_state_index][0] == 1
+		if is_game_over or not self.env._allow_all_modes:
+			observation, done = self.env._perform_known_steps(
+				observation, done, exceptions=True
+			)
+
 		self.env._steps += 1
 		self.env.last_observation = observation
+
 		if self.env._check_abort(observation):
 			end_status = self.env.StepStatus.ABORTED
 		else:
@@ -38,7 +48,13 @@ class NLEnv():
 		end_status = self.env.StepStatus(self.done or end_status)
 
 		self.reward = float(self.env._reward_fn(last_observation, None, observation, end_status)) # action is not used so it's safe
+
+		if end_status and not done:
+			self.env._quit_game(observation, done)
+			done = True
+
 		self.observation = self.env._get_observation(observation)
+		self.done:bool = done
 		return self.observation, self.reward, self.done
 
 env = NLEnv(character='@', savedir=None, penalty_step=-0.01)

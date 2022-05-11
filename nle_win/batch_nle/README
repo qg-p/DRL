@@ -1,0 +1,2 @@
+从 bytes 发送 batch。一个 batch 包含至少一个游戏实例，相当于并行运行 batch_size 个游戏，得以使用 LSTM。
+完全通过 action 控制游戏。若 done 为 True 则对于任何 action 均重置游戏；若 action 为 -1 亦重置游戏。
