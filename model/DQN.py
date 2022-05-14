@@ -7,6 +7,42 @@ import nle_win as nle
 原 m1.py 模型及周边代码
 '''
 
+# 三个 actions 序列，重要的是长度和 actions_normal 的内容
+# 修改后需要到 exec_action 检查
+actions_ynq=[ # q(uit), y(es), n(o)
+	None, True, False
+]
+# actions_inv=[ # space, numbers, symbols and letters, return non-zero reward only-if misc[0] and not misc[1]
+# 	chr(i) for i in range(33, 127)
+# ] + [' ']
+actions_inv=['-']+[chr(i) for i in range(ord('a'), ord('z'))]+[chr(i) for i in range(ord('A'), ord('Z'))]+['*', '?']
+actions_normal=[ # normal actions
+	0, 1, 2, 3, 4, 5, 6, 7, # move
+	16, 17, 75, # up, down, search(wait)
+#	19, # more
+	30, # close (door)
+#	38, # esc
+#	39, # fight
+	48, # kick
+#	57, # open (door)
+	61, # pick up
+]
+# 限定 actions_normal 中哪些动作可使用，不改变网络结构，作用于 select_action
+# 以免收敛到全程 search 或只做错误动作，训练上百轮 T 还是 1。缓解稀疏奖励。
+actions_normal_allowed=[True]*len(actions_normal)
+def actions_normal_chmod(mode:int,
+	modes:int=[
+		[True]*8+[False]*(len(actions_normal)-8), # just movement*8
+		[True]*8+[True]*3+[False]*(len(actions_normal)-8-3), # movement, up/dn, search
+		[True]*len(actions_normal), # all
+	]
+):
+	allowed = modes[mode] if mode>=0 and mode<len(modes) else []
+	for i, mod in enumerate(allowed): # deep copy
+		actions_normal_allowed[i] = mod
+# actions = actions_ynq + actions_inv + actions_normal
+actions_list = [actions_ynq, actions_inv, actions_normal]
+
 import torch
 from torch import nn
 
@@ -57,7 +93,7 @@ class Conv(Bottleneck):
 		y = self.network(x)
 		return y
 class DQN(nn.Module):
-	def __init__(self, device) -> None:
+	def __init__(self, device, n_actions_ynq:int=len(actions_ynq), n_actions_normal:int=len(actions_normal)) -> None:
 		super().__init__()
 		self.device = device
 		self.Q = [ # List 表示顺序，Tuple 表示并列
@@ -130,7 +166,7 @@ class DQN(nn.Module):
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
-					nn.Linear(16, len(actions_ynq))
+					nn.Linear(16, n_actions_ynq)
 				),
 				( # inventory
 					nn.Sequential( # 物品栏无序。这样可以消除输入的顺序性，生成每个物品的表示
@@ -150,7 +186,7 @@ class DQN(nn.Module):
 						nn.Linear(4, 1)
 					),
 					nn.Sequential( # 考虑多个物品间的联系。物品栏无序故不需检测连续介值的特征
-						nn.Linear(55, 55), nn.Softmax(55),
+						nn.Linear(55, 55), nn.Softmax(1),
 						nn.Linear(55, 55), nn.ReLU(inplace=True),
 						nn.Linear(55, 55), nn.ReLU(inplace=True),
 						nn.Linear(55, 55), nn.ReLU(inplace=True),
@@ -165,7 +201,7 @@ class DQN(nn.Module):
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
-					nn.Linear(16, len(actions_normal))
+					nn.Linear(16, n_actions_normal)
 				),
 			],
 		]
@@ -245,7 +281,7 @@ class DQN(nn.Module):
 		# 	self.Q[2][1][1].train(False)
 		# 	self.Q[2][1][2].train(False)
 		z = self.Q[2][1][0](inv_55_6_batch)
-		tmp = torch.cat([y_batch]*z.shape[1], axis=1)
+		tmp = torch.stack([y_batch]*z.shape[1], axis=1)
 		z = torch.cat([z, tmp], axis=2)
 		z = self.Q[2][1][1](z).squeeze(2) # batch size * 55
 		z:torch.Tensor = self.Q[2][1][2](z)
@@ -298,44 +334,9 @@ class DQN(nn.Module):
 		self.load_state_dict(torch.load(filename).state_dict())
 
 
-# 三个 actions 序列，重要的是长度和 actions_normal 的内容
-# 修改后需要到 exec_action 检查
-actions_ynq=[ # q(uit), y(es), n(o)
-	None, True, False
-]
-# actions_inv=[ # space, numbers, symbols and letters, return non-zero reward only-if misc[0] and not misc[1]
-# 	chr(i) for i in range(33, 127)
-# ] + [' ']
-actions_inv=['-']+[chr(i) for i in range(ord('a'), ord('z'))]+[chr(i) for i in range(ord('A'), ord('Z'))]+['*', '?']
-actions_normal=[ # normal actions
-	0, 1, 2, 3, 4, 5, 6, 7, # move
-	16, 17, 75, # up, down, search(wait)
-#	19, # more
-	30, # close (door)
-#	38, # esc
-#	39, # fight
-	48, # kick
-#	57, # open (door)
-	61, # pick up
-]
-# 限定 actions_normal 中哪些动作可使用，不改变网络结构，作用于 select_action
-# 以免收敛到全程 search 或只做错误动作，训练上百轮 T 还是 1。缓解稀疏奖励。
-actions_normal_allowed=[True]*len(actions_normal)
-def actions_normal_chmod(mode:int,
-	modes:int=[
-		[True]*8+[False]*(len(actions_normal)-8), # just movement*8
-		[True]*8+[True]*3+[False]*(len(actions_normal)-8-3), # movement, up/dn, search
-		[True]*len(actions_normal), # all
-	]
-):
-	allowed = modes[mode] if mode>=0 and mode<len(modes) else []
-	for i, mod in enumerate(allowed): # deep copy
-		actions_normal_allowed[i] = mod
-# actions = actions_ynq + actions_inv + actions_normal
-actions_list = [actions_ynq, actions_inv, actions_normal]
 def action_set_no(misc_6:list):
 	if misc_6[0] or (misc_6[3] and not misc_6[4]): return 1
-	elif misc_6[4] or misc_6[1]:
+	elif misc_6[4] or misc_6[1] or misc_6[2]:
 		return 0
 	else: return 2
 

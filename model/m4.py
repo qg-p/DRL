@@ -40,7 +40,7 @@ def select_action(state:nle.basic.obs.observation, model0:DQN, model1:DQN, n_ep:
 						action = i
 		print('Q predict: %.6f'%(Q[action].item()))
 	return action, no_action_set
-from model.m1 import exec_action
+from model.DQN import exec_action
 from replay_memory import Transition
 from typing import List
 def train_batch(batch:List[Transition], model0:DQN, model1:DQN, loss_func, optimizer0:torch.optim.Optimizer, optimizer1:torch.optim.Optimizer, gamma:float, device:torch.device):

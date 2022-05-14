@@ -12,8 +12,8 @@ class DQN_LSTM(DQN):
 	# 在 DQN 的基础上加一 LSTM。64 为 Q[2] 的输入通道数以及 Q[1][0] 的输入通道数，即中间变量 y 的通道数。
 	# 该 LSTM 不改变 Q[1] Q[2] 间的输入输出通道数 (64)，嵌入位置为 Q[1][1]，串行。
 	# 原 Q[1] 网络逻辑位置变为 Q[1][0]，实际位置不改动。
-	def __init__(self, device) -> None:
-		super().__init__(device)
+	def __init__(self, device, n_actions_ynq:int, n_actions_normal:int) -> None:
+		super().__init__(device, n_actions_ynq, n_actions_normal)
 		self.LSTM = nn.LSTM(64, 64, batch_first=False, num_layers=1, bias=True, bidirectional=False) # y
 	# LSTM_states 为临时变量，坐标为 (epoch, episode)，相邻 epoch 同一 episode 的 LSTM_state 邻接。
 	# LSTM_state 初始值为 0。

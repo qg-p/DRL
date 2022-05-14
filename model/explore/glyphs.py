@@ -256,7 +256,7 @@ def translate_messages_misc(obs:obs):
 	translation = [
 		misc[0], # whether a line is required
 		int(message_has_more or misc[1]), # 0 or 1
-		misc[2], # unknown
+		misc[2], # message box
 		int('? [' in message and ']' in message), # such as 'Really quit? [yn] (n)', 'What do you want to wield? [- a or *?]'
 		int('? [yn' in message), # y/n/q question
 		int('locked' in message), # This door is locked, It turns to be locked, The chest is locked

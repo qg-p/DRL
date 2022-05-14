@@ -64,7 +64,7 @@ def init():
 		if not path.exists(fifo):
 			fifos += ' '+fifo
 	if len(fifos):
-		if system("mkfifo"+fifo):
+		if system("mkfifo"+fifos):
 			raise Exception('fail to mkfifo in '+init.fifodir)
 
 def start():

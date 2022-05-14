@@ -17,12 +17,12 @@ if __name__ == '__main__':
 			EXEC('env.env.render()')
 			need_redraw = False
 # make decision
-			from getch import Getch
-			action = Getch()
-			obs, r, done = step_primitive(action)
-			print([*obs.blstats])
-			print(r)
-			need_redraw = True
+		from getch import Getch
+		action = Getch()
+		obs, r, done = step_primitive(action)
+		print([*obs.blstats])
+		print(r)
+		need_redraw = True
 # take action
 	print('done')
 	EXEC('env.close()')
