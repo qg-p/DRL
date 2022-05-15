@@ -4,6 +4,7 @@ if __name__=='__main__':
 	del os, sys
 # 使用 batch_client 和新 actions
 # 由于技术原因（调了整整半天的BUG）不使用 LSTM
+# 更正，是一天半。python 的内存管理和 C 相差很大，且难以区分引用和变量。
 
 from model.DQN import action_set_no
 from model.DQN import DQN, nle, torch
@@ -69,7 +70,6 @@ def select_action(
 			else: # 其它情况；将位置映射到动作的 ord
 				actions = actions_list[no_action_set]
 			action = actions[action_index]
-	print('%2d,'%(len(actions_list[no_action_set]) if state is not None else 0), end=' ')
 	return action, action_index
 
 def optimize_batch(
@@ -170,7 +170,7 @@ def train_n_batch(
 			(optimizer1, model1, Q1, Q0),
 		)[randint(0, 1)]
 		[Q_train] = forward_batch(last_batch_state, [model])
-		if 1:
+		if 1: # probe
 			from model.explore.glyphs import translate_messages_misc
 			print('lQ', [len(i) if i is not None else 0 for i in Q_train])
 			print('lA', [len(actions_list[action_set_no(translate_messages_misc(state))]) if state is not None else 0 for state in last_batch_state])
@@ -181,22 +181,27 @@ def train_n_batch(
 			# train_batch(batch_action_index, batch_reward, Q0, Q1, loss_func, optimizer0, optimizer1, next_Q0, next_Q1, gamma)
 
 		except:
-			from model.explore.glyphs import translate_messages_misc
-			print([translate_messages_misc(state) if state is not None else [1]*6 for state in batch_state])
-			# print(bytes(batch_action))
-			print([action_set_no(translate_messages_misc(state)) if state is not None else 3 for state in batch_state])
+			# from model.explore.glyphs import translate_messages_misc
+			# print([translate_messages_misc(state) if state is not None else [1]*6 for state in last_batch_state])
+			# print(batch_action_index)
+			# print([action_set_no(translate_messages_misc(state)) if state is not None else 3 for state in last_batch_state])
 			raise
 
-		copy_state(last_batch_state, batch_state, last_batch_state_buffer)
-		print('nA', end=' ')
 		batch_action = [select_action(s, n_ep, q0, q1) for (s, q0, q1) in zip(batch_state, Q0, Q1)]
-		print()
 		batch_action_index, batch_action = [i[1] for i in batch_action], [i[0] for i in batch_action]
+		if 1:
+			from model.explore.glyphs import translate_messages_misc
+			print('Ai new', batch_action_index)
+			print('lA new', [len(actions_list[action_set_no(translate_messages_misc(state))]) if state is not None else 0 for state in batch_state])
+		copy_state(last_batch_state, batch_state, last_batch_state_buffer) # 要在 step 前复制
 
-		observations = env.step(batch_action)
+		observations = env.step(batch_action) # 注意 batch_state 的元素均指向 env.frcv 的成员的内存，step 会改变 batch_state
 		# from nle_win.batch_nle import EXEC
 		# EXEC('env.render(0)')
-		batch_state = [i.obs if not i.done else None for i in observations]
+		if 1:
+			from model.explore.glyphs import translate_messages_misc
+			print('lA new', [len(actions_list[action_set_no(translate_messages_misc(state))]) if state is not None else 0 for state in last_batch_state])
+		batch_state = [i.obs if not i.done else None for i in observations] # 更新 None 状态
 		batch_reward = [i.reward for i in observations]
 
 		[Q0, Q1] = forward_batch(batch_state, [model0, model1])
@@ -226,17 +231,17 @@ def __main__(*, num_epoch:int, batch_size:int, gamma:float, use_gpu:bool, model0
 	batch_state, batch_action_index = env.step(batch_action_index[0]), batch_action_index[1] # 这里的 batch_state 为临时变量
 	batch_state, batch_reward = [i.obs if not i.done else None for i in batch_state], [i.reward for i in batch_state]
 
-	for i in range(num_epoch):
-		start_epoch = i
+	n = num_epoch
+	N = 3*n
+	for start_epoch in range(0, N, n):
 		last_batch_state, batch_action_index, batch_reward, batch_state, Q0, Q1 = train_n_batch( # one period
-			start_epoch, 1, env, model0, model1, loss_func, optimizer0, optimizer1,
+			start_epoch, n, env, model0, model1, loss_func, optimizer0, optimizer1,
 			last_batch_state, batch_action_index, batch_reward, batch_state, # reset all env, do not use input q
 			Q0, Q1, # Q[i] will not be visited if state[i] is None
 			gamma,
 		)
 		# for i in (last_batch_state, batch_action_index, batch_reward, batch_state, Q0, Q1):
 		# 	print(i)
-		#batch_state[2] = None # test: force reset
 		# TODO: 保存，定期全量备份，合适的函数名
 
 	disconnect()
