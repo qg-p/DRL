@@ -186,7 +186,7 @@ class DQN(nn.Module):
 						nn.Linear(4, 1)
 					),
 					nn.Sequential( # 考虑多个物品间的联系。物品栏无序故不需检测连续介值的特征
-						nn.Linear(55, 55), nn.Softmax(1),
+						nn.Linear(55, 55), nn.Softmax(-1),
 						nn.Linear(55, 55), nn.ReLU(inplace=True),
 						nn.Linear(55, 55), nn.ReLU(inplace=True),
 						nn.Linear(55, 55), nn.ReLU(inplace=True),
@@ -214,7 +214,7 @@ class DQN(nn.Module):
 		add_q_to_model(self, self.Q, 'Q')
 		self.to(self.device)
 
-	from explore.glyphs import translate_glyph
+	from model.explore.glyphs import translate_glyph
 	default_glyph = 2359 # ' '
 	default_translation = translate_glyph(default_glyph)
 	from typing import List
@@ -335,9 +335,12 @@ class DQN(nn.Module):
 
 
 def action_set_no(misc_6:list):
-	if misc_6[0] or (misc_6[3] and not misc_6[4]): return 1
-	elif misc_6[4] or misc_6[1] or misc_6[2]:
-		return 0
+	if misc_6[3] and misc_6[4] and misc_6[5]:
+		if misc_6[0]: return 0
+		else: return 2 # y/n question repeats. minor bug
+	elif misc_6[5] and not misc_6[3]: return 2
+	elif misc_6[0] and misc_6[3]: return 1
+	elif misc_6[0] or misc_6[3] or misc_6[2]: return 0
 	else: return 2
 
 # select_action

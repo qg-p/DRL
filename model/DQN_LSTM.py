@@ -19,6 +19,10 @@ class DQN_LSTM(DQN):
 	# LSTM_state 初始值为 0。
 	def initial_LSTM_state(self):
 		return (torch.zeros([1, 64]).to(self.device), torch.zeros([1, 64]).to(self.device))
+	# def reset_LSTM_state(self, i):
+	# 	pass
+	# def get_LSTM_state(self, i):
+	# 	pass
 	from typing import List, Tuple
 	# List 算作一列，则 obs_batch 与 LSTM_states 行对齐。
 	def _forward_y(self, obs_batch:List[nle.basic.obs.observation], LSTM_states:List[Tuple[torch.tensor, torch.tensor]]):

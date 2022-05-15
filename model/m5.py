@@ -25,6 +25,7 @@ actions_normal = [ord(ch) for ch in [
 	't', # throw
 	'W', 'A', # wear, take off
 	'w', # wield
+	'\x1b', # esc
 ]]
 from typing import List, Tuple
 actions_list:List[List[int]]=[actions_ynq, actions_inv, actions_normal]
@@ -61,7 +62,7 @@ def select_action(
 				action_index = random.randint(0, len(actions)-1)
 				action = actions[action_index]
 		else:
-			Q = Q0[0] + Q1[0]
+			Q = Q0[0].data + Q1[0].data
 			action_index = Q.argmax().item()
 			if no_action_set == 1: # 物品栏；将位置映射到对应位置的字母
 				actions = state.inv_letters # 
@@ -72,7 +73,7 @@ def select_action(
 
 def train_batch(
 	last_batch_state:List[nle.basic.obs.observation],
-	batch_action_index:List[int],
+	last_batch_action_index:List[int],
 	batch_reward:List[float],
 	model0:DQN_LSTM, model1:DQN_LSTM,
 	loss_func,
@@ -97,7 +98,7 @@ def train_batch(
 	train_last_RNN_STATE = [(h.detach(), c.detach()) for (h, c) in train_last_RNN_STATE]
 	last_Q_train, _ = forward_batch(last_batch_state, train_model, train_last_RNN_STATE)
 	p, y, r = [], [], []
-	for (last_Q, A, Q, Q_, R, S) in zip(last_Q_train, batch_action_index, Q_train, Q_eval, batch_reward, last_batch_state):
+	for (last_Q, A, Q, Q_, R, S) in zip(last_Q_train, last_batch_action_index, Q_train, Q_eval, batch_reward, last_batch_state):
 		if S is not None:
 			try:
 				p.append(last_Q[A])
@@ -113,6 +114,7 @@ def train_batch(
 	p = torch.stack(p) # prediction
 	y = torch.stack(y).detach()
 	y = torch.tensor(r).to(model0.device) + gamma * y
+	print('p[a]', p)
 	# y = y.detach()
 	# print(p); print(y)
 	# print(no, id(train_last_RNN_STATE))
@@ -127,7 +129,7 @@ def train_batch(
 
 def another_train_batch(
 	last_batch_state:List[nle.basic.obs.observation],
-	batch_action_index:List[int],
+	last_batch_action_index:List[int],
 	batch_reward:List[float],
 	last_Q0:List[torch.Tensor], last_Q1:List[torch.Tensor],
 	loss_func,
@@ -149,7 +151,7 @@ def another_train_batch(
 		(last_Q1, optimizer1, Q1, Q0),
 	)[no]
 	p, y, r = [], [], []
-	for (last_Q, A, Q, Q_, R, S) in zip(last_Q_train, batch_action_index, Q_train, Q_eval, batch_reward, last_batch_state):
+	for (last_Q, A, Q, Q_, R, S) in zip(last_Q_train, last_batch_action_index, Q_train, Q_eval, batch_reward, last_batch_state):
 		if S is not None:
 			p.append(last_Q[A])
 			y.append(Q[Q_.argmax().item()])
@@ -205,6 +207,7 @@ def train_n_batch(
 	batch_state:List[nle.basic.obs.observation],
 	Q0:List[torch.Tensor], Q1:List[torch.Tensor],
 	RNN_STATE0:List[Tuple[torch.Tensor, torch.Tensor]], RNN_STATE1:List[Tuple[torch.Tensor, torch.Tensor]],
+	batch_action_index:List[int],
 	gamma:float
 ):
 	from ctypes import memmove, sizeof, pointer
@@ -220,6 +223,7 @@ def train_n_batch(
 			else:
 				last_batch_state[i] = None
 
+		last_batch_action_index = batch_action_index
 		batch_action = [select_action(s, n_ep, q0, q1) for (s, q0, q1) in zip(batch_state, Q0, Q1)]
 		batch_action_index, batch_action = [i[1] for i in batch_action], [i[0] for i in batch_action]
 
@@ -233,6 +237,8 @@ def train_n_batch(
 		last_Q0, last_Q1 = Q0, Q1
 		Q0, RNN_STATE0 = forward_batch(batch_state, model0, RNN_STATE0)
 		Q1, RNN_STATE1 = forward_batch(batch_state, model1, RNN_STATE1)
+		print('q0[a]', torch.tensor([q[i].item() for (q, i) in zip(Q0, batch_action_index) if q is not None]))
+		print('q1[a]', torch.tensor([q[i].item() for (q, i) in zip(Q1, batch_action_index) if q is not None]))
 		# print('action:', bytes(batch_action))
 		# print('Q0', Q0, 'RNN_STATE0')
 		# print('Q1', Q1, 'RNN_STATE1')
@@ -240,8 +246,8 @@ def train_n_batch(
 		# print('last RNNSTT0:', last_RNN_STATE0[0][0])
 
 		try:
-			train_batch(last_batch_state, batch_action_index, batch_reward, model0, model1, loss_func, optimizer0, optimizer1, Q0, Q1, last_RNN_STATE0, last_RNN_STATE1, gamma)
-			#another_train_batch(last_batch_state, batch_action_index, batch_reward, last_Q0, last_Q1, loss_func, optimizer0, optimizer1, Q0, Q1, gamma)
+			train_batch(last_batch_state, last_batch_action_index, batch_reward, model0, model1, loss_func, optimizer0, optimizer1, Q0, Q1, last_RNN_STATE0, last_RNN_STATE1, gamma)
+			#another_train_batch(last_batch_state, last_batch_action_index, batch_reward, last_Q0, last_Q1, loss_func, optimizer0, optimizer1, Q0, Q1, gamma)
 		except:
 			print(batch_action_index, bytes(batch_action))
 			raise
@@ -265,6 +271,7 @@ def __main__(*, num_epoch:int, batch_size:int, gamma:float, use_gpu:bool, model0
 	Q1:List[torch.Tensor] = [None]*batch_size
 	RNN_STATE0:List[Tuple[torch.Tensor, torch.Tensor]] = [model0.initial_LSTM_state()]*batch_size
 	RNN_STATE1:List[Tuple[torch.Tensor, torch.Tensor]] = [model1.initial_LSTM_state()]*batch_size
+	batch_action_index = [0]*batch_size
 
 	a=[i.detach() for i in model0.LSTM.parameters()]
 	for i in range(1):
@@ -273,6 +280,7 @@ def __main__(*, num_epoch:int, batch_size:int, gamma:float, use_gpu:bool, model0
 			batch_state, # reset all env, do not use input q
 			Q0, Q1, # Q[i] will not be visited if state[i] is None
 			RNN_STATE0, RNN_STATE1, # will reset rnn_state[i] if state[i] is none
+			batch_action_index,
 			gamma,
 		)
 		# TODO: 保存，定期全量备份，合适的函数名

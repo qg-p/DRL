@@ -252,14 +252,14 @@ def translate_messages_misc(obs:obs):
 	from ctypes import string_at
 	message = string_at(message_256).decode()
 	misc = [int(i) for i in misc_3]
-	message_has_more = '--More--' in message
+	# message_has_more = '--More--' in message
 	translation = [
-		misc[0], # whether a line is required
-		int(message_has_more or misc[1]), # 0 or 1
-		misc[2], # message box
+		misc[0], # whether an item is required
+		misc[1], # 0 or 1 # use enter to skip # message_has_more or misc[1]
+		misc[2], # use space or enter to skip
 		int('? [' in message and ']' in message), # such as 'Really quit? [yn] (n)', 'What do you want to wield? [- a or *?]'
 		int('? [yn' in message), # y/n/q question
-		int('locked' in message), # This door is locked, It turns to be locked, The chest is locked
+		int('?' in message), # This door is locked, It turns to be locked, The chest is locked
 	]
 	return translation
 def allowed_char(obs:obs): # e.g. [- abh-CYZ] -> - a b h~C Y Z

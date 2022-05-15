@@ -12,6 +12,8 @@ def Exec():
 if __name__ == '__main__':
 	from nle_win.batch_nle import connect, disconnect, EXEC, batch, terminate
 	import numpy as np
+	from model.DQN import action_set_no
+	from model.explore.glyphs import translate_messages_misc
 	connect()
 	env = batch(1, 'character="Val-Hum-Fem-Law", savedir=None, penalty_step=-0.01')
 	print('start')
@@ -32,7 +34,7 @@ if __name__ == '__main__':
 		obs, reward, done = line.obs, line.reward, line.done
 		print('blstats: {}'.format([*obs.blstats]))
 		print('inv_letters: {}'.format([*obs.inv_letters]))
-		print('misc: {}'.format([*obs.misc]))
+		print('misc: {} {} {}'.format([*obs.misc], translate_messages_misc(obs), action_set_no(translate_messages_misc(obs))))
 		print('reward: %g'%(reward))
 		need_redraw = True
 # take action
