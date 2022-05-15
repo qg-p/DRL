@@ -25,6 +25,7 @@ actions_normal = [ord(ch) for ch in [
 	't', # throw
 	'W', 'A', # wear, take off
 	'w', # wield
+	'\r', # enter
 ]]
 from typing import List, Tuple
 actions_list:List[List[int]]=[actions_ynq, actions_inv, actions_normal]
@@ -37,10 +38,10 @@ def select_action(
 	return action, action_index
 	'''
 	if state is None:
-		action_index:int = 0 # Q[i]=[0] if state[i] is None
+		action_index:int = None # Q[i]=[0] if state[i] is None
 		action:int = 255 # reset env
 	else:
-		from explore.glyphs import translate_messages_misc
+		from model.explore.glyphs import translate_messages_misc
 		no_action_set = action_set_no(translate_messages_misc(state))
 
 		EPS_INCR = 2.
@@ -61,13 +62,14 @@ def select_action(
 				action_index = random.randint(0, len(actions)-1)
 				action = actions[action_index]
 		else:
-			Q = Q0[0].data + Q1[0].data
+			Q = Q0.data + Q1.data
 			action_index = Q.argmax().item()
 			if no_action_set == 1: # 物品栏；将位置映射到对应位置的字母
 				actions = state.inv_letters # 
 			else: # 其它情况；将位置映射到动作的 ord
 				actions = actions_list[no_action_set]
 			action = actions[action_index]
+	print('%2d,'%(len(actions_list[no_action_set]) if state is not None else 0), end=' ')
 	return action, action_index
 
 def optimize_batch(
@@ -91,7 +93,7 @@ def optimize_batch(
 		if q_train is not None:
 			try:
 				p.append(q_train[A])
-				y.append(next_q_train[next_q_eval.argmax()] if next_q_train is not None else 0.) # 终止状态 Q 为 0
+				y.append(next_q_train[next_q_eval.argmax()].item() if next_q_train is not None else 0.) # 终止状态 Q 为 0
 				r.append(R)
 			except:
 				print(i, A)
@@ -99,7 +101,7 @@ def optimize_batch(
 				raise
 	if not len(p): return 0
 	p = torch.stack(p) # prediction
-	y = torch.stack(y)
+	y = torch.tensor(y, device=p.device)
 	y = torch.tensor(r, device=p.device) + gamma * y
 	# print(p); print(y)
 
@@ -142,14 +144,16 @@ def train_n_batch(
 	model0:DQN, model1:DQN,
 	loss_func,
 	optimizer0:torch.optim.Optimizer, optimizer1:torch.optim.Optimizer,
+	last_batch_state:List[nle.basic.obs.observation],
+	batch_action_index:List[int],
+	batch_reward:List[float],
 	batch_state:List[nle.basic.obs.observation],
 	Q0:List[torch.Tensor], Q1:List[torch.Tensor],
-	batch_action_index:List[int],
 	gamma:float
-):
-	from ctypes import memmove, sizeof, pointer
-	batch_state_buffer = [*(nle.basic.obs.observation*env.frcv.batch_size)()] # allocate memory
+): # ((None, None, None), (None, R1, S1), ..., (Ai, Ri, Si), (Aj, Rj, None), (None, Rk, Sk), ...)
+	last_batch_state_buffer = [*(nle.basic.obs.observation*env.frcv.batch_size)()] # allocate memory
 	def copy_state(dst:List[nle.basic.obs.observation], src:List[nle.basic.obs.observation], buffer:List[nle.basic.obs.observation]):
+		from ctypes import memmove, sizeof, pointer
 		for i, state in enumerate(src):
 			if state is not None:
 				dst[i] = buffer[i]
@@ -160,67 +164,79 @@ def train_n_batch(
 	for n_ep in range(start_epoch, start_epoch+num_epoch):
 		print('epoch %-6d'%(n_ep))
 
-		batch_action = [select_action(s, n_ep, q0, q1) for (s, q0, q1) in zip(batch_state, Q0, Q1)]
-		batch_action_index, batch_action = [i[1] for i in batch_action], [i[0] for i in batch_action]
-
-		observations = env.step(batch_action)
-		# from nle_win.batch_nle import EXEC
-		# EXEC('env.render(0)')
-		next_batch_state:List[nle.basic.obs.observation] = [i.obs if not i.done else None for i in observations]
-		batch_reward = [i.reward for i in observations]
-
-		Q0, Q1 = forward_batch(next_batch_state, [model0, model1])
 		from random import randint
 		(optimizer, model, next_Q_train, next_Q_eval) = (
 			(optimizer0, model0, Q0, Q1),
 			(optimizer1, model1, Q1, Q0),
 		)[randint(0, 1)]
-		[Q_train] = forward_batch(batch_state, [model])
+		[Q_train] = forward_batch(last_batch_state, [model])
 		if 1:
 			from model.explore.glyphs import translate_messages_misc
-			print('Q', [len(i) for i in Q_train if i is not None])
-			print('A', [len(actions_list[action_set_no(translate_messages_misc(state))]) if state is not None else 0 for state in batch_state])
-			print('N', [action_set_no(translate_messages_misc(state)) if state is not None else 3 for state in batch_state])
+			print('lQ', [len(i) if i is not None else 0 for i in Q_train])
+			print('lA', [len(actions_list[action_set_no(translate_messages_misc(state))]) if state is not None else 0 for state in last_batch_state])
+			print('Ai', batch_action_index)
+			# print('No', [action_set_no(translate_messages_misc(state)) if state is not None else 3 for state in last_batch_state])
 		try:
 			loss = optimize_batch(batch_action_index, batch_reward, loss_func, optimizer, Q_train, next_Q_train, next_Q_eval, gamma)
 			# train_batch(batch_action_index, batch_reward, Q0, Q1, loss_func, optimizer0, optimizer1, next_Q0, next_Q1, gamma)
 
 		except:
 			from model.explore.glyphs import translate_messages_misc
-			print([translate_messages_misc(state) for state in batch_state])
-			print(bytes(batch_action))
-			print([action_set_no(translate_messages_misc(state)) for state in batch_state])
+			print([translate_messages_misc(state) if state is not None else [1]*6 for state in batch_state])
+			# print(bytes(batch_action))
+			print([action_set_no(translate_messages_misc(state)) if state is not None else 3 for state in batch_state])
 			raise
-		copy_state(batch_state, next_batch_state, batch_state_buffer)
+
+		copy_state(last_batch_state, batch_state, last_batch_state_buffer)
+		print('nA', end=' ')
+		batch_action = [select_action(s, n_ep, q0, q1) for (s, q0, q1) in zip(batch_state, Q0, Q1)]
+		print()
+		batch_action_index, batch_action = [i[1] for i in batch_action], [i[0] for i in batch_action]
+
+		observations = env.step(batch_action)
+		# from nle_win.batch_nle import EXEC
+		# EXEC('env.render(0)')
+		batch_state = [i.obs if not i.done else None for i in observations]
+		batch_reward = [i.reward for i in observations]
+
+		[Q0, Q1] = forward_batch(batch_state, [model0, model1])
 		print('loss %10.4f | a '%(loss), bytes(batch_action))
-	return next_batch_state, Q0, Q1
+
+	return last_batch_state, batch_action_index, batch_reward, batch_state, Q0, Q1
 
 def __main__(*, num_epoch:int, batch_size:int, gamma:float, use_gpu:bool, model0_file:str=None, model1_file:str=None):
 	from torch import nn
 	device = torch.device("cuda" if use_gpu and torch.cuda.is_available() else "cpu")
 	model0:DQN = torch.load(model0_file) if model0_file is not None else DQN(device, len(actions_ynq), len(actions_normal))
 	model1:DQN = torch.load(model1_file) if model1_file is not None else DQN(device, len(actions_ynq), len(actions_normal))
-	optimizer0 = torch.optim.SGD(model0.parameters(), lr=0.01)
-	optimizer1 = torch.optim.SGD(model1.parameters(), lr=0.01)
+	optimizer0 = torch.optim.Adam(model0.parameters(), lr=0.01)
+	optimizer1 = torch.optim.Adam(model1.parameters(), lr=0.01)
 	loss_func = nn.SmoothL1Loss()
 
 	from nle_win.batch_nle.client import connect, disconnect, batch
 	connect()
 	env = batch(batch_size, 'character="Val-Hum-Fem-Law", savedir=None, penalty_step=-0.01')
 
-	batch_state:List[nle.basic.obs.observation] = [None]*batch_size
-	Q0:List[torch.Tensor] = [None]*batch_size
-	Q1:List[torch.Tensor] = [None]*batch_size
-	batch_action_index = [None]*batch_size
+	last_batch_state:List[nle.basic.obs.observation] = [None]*batch_size
+	Q0:List[torch.Tensor] = [torch.zeros(1)]*batch_size
+	Q1:List[torch.Tensor] = [torch.zeros(1)]*batch_size
 
-	for _ in range(1):
-		batch_state, Q0, Q1 = train_n_batch(
-			0, num_epoch, env, model0, model1, loss_func, optimizer0, optimizer1,
-			batch_state, # reset all env, do not use input q
+	batch_action_index = [select_action(state, 0, Q0, Q1) for state in last_batch_state] # 这里的 batch_action_index 为临时变量
+	batch_action_index = ([i[0] for i in batch_action_index], [i[1] for i in batch_action_index])
+	batch_state, batch_action_index = env.step(batch_action_index[0]), batch_action_index[1] # 这里的 batch_state 为临时变量
+	batch_state, batch_reward = [i.obs if not i.done else None for i in batch_state], [i.reward for i in batch_state]
+
+	for i in range(num_epoch):
+		start_epoch = i
+		last_batch_state, batch_action_index, batch_reward, batch_state, Q0, Q1 = train_n_batch( # one period
+			start_epoch, 1, env, model0, model1, loss_func, optimizer0, optimizer1,
+			last_batch_state, batch_action_index, batch_reward, batch_state, # reset all env, do not use input q
 			Q0, Q1, # Q[i] will not be visited if state[i] is None
-			batch_action_index,
 			gamma,
 		)
+		# for i in (last_batch_state, batch_action_index, batch_reward, batch_state, Q0, Q1):
+		# 	print(i)
+		#batch_state[2] = None # test: force reset
 		# TODO: 保存，定期全量备份，合适的函数名
 
 	disconnect()
@@ -230,8 +246,8 @@ def pretrain():
 	raise Exception('TODO')
 
 if __name__ == '__main__':
-	batch_size = 4 # 128 会爆显存
-	num_epoch = 40
+	batch_size = 8 # 128 会爆显存
+	num_epoch = 10
 	gamma = 1
 	use_gpu = False
 	# torch.autograd.set_detect_anomaly(True) # DEBUG
