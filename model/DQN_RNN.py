@@ -64,20 +64,19 @@ class DQN_RNN(DQN):
 				nn.Linear(64, 64), nn.ReLU(inplace=True),
 				nn.Linear(64, 64), nn.ReLU(inplace=True),
 			)
-		def initial_state(self):
-			return torch.zeros(64)
 		def forward(self, y:torch.Tensor, RNN_states:torch.Tensor):
 			RNN_input = torch.cat((y, RNN_states), axis=1) # [batch_size][128]
 			RNN_output:torch.Tensor = self.network.forward(RNN_input) # [batch_size][64]
 			y = RNN_output + y # 防止梯度消失或爆炸
 			RNN_states = y.detach() # 将输出 y 作为 RNN 隐藏状态（一点也没有隐藏的意思）
 			return y, RNN_states
-
+		INITIAL_RNN_STATE = torch.zeros(64)
 	def __init__(self, device, n_actions_ynq:int, n_actions_normal:int):
 		super().__init__(device, n_actions_ynq, n_actions_normal)
-		self.RNN = DQN_RNN.RNN_Module()
+		self.RNN = DQN_RNN.RNN_Module().to(device)
+		self.INITIAL_RNN_STATE = self.RNN.INITIAL_RNN_STATE.to(device)
 	def initial_RNN_state(self):
-		return self.RNN.initial_state()
+		return self.INITIAL_RNN_STATE
 	from typing import List
 	def _forward_y(self, obs_batch:List[nle.basic.obs.observation], RNN_states:List[torch.Tensor]):
 		assert len(obs_batch) == len(RNN_states)
