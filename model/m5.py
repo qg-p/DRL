@@ -5,7 +5,7 @@ if __name__=='__main__':
 # DQN_LSTM 的 Double DQN 训练样板。
 
 from model.DQN import action_set_no
-from model.DQN_LSTM import DQN_LSTM, nle, torch
+from model.DQN_RNN import DQN_LSTM, nle, torch
 from model.replay_memory import Transition
 
 actions_ynq = [ord(ch) for ch in [

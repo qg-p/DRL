@@ -170,46 +170,28 @@ def train_n_batch(
 			(optimizer1, model1, Q1, Q0),
 		)[randint(0, 1)]
 		[Q_train] = forward_batch(last_batch_state, [model])
-		if 1: # probe
-			from model.explore.glyphs import translate_messages_misc
-			print('lQ', [len(i) if i is not None else 0 for i in Q_train])
-			print('lA', [len(actions_list[action_set_no(translate_messages_misc(state))]) if state is not None else 0 for state in last_batch_state])
-			print('Ai', batch_action_index)
-			# print('No', [action_set_no(translate_messages_misc(state)) if state is not None else 3 for state in last_batch_state])
-		try:
-			loss = optimize_batch(batch_action_index, batch_reward, loss_func, optimizer, Q_train, next_Q_train, next_Q_eval, gamma)
-			# train_batch(batch_action_index, batch_reward, Q0, Q1, loss_func, optimizer0, optimizer1, next_Q0, next_Q1, gamma)
-
-		except:
-			# from model.explore.glyphs import translate_messages_misc
-			# print([translate_messages_misc(state) if state is not None else [1]*6 for state in last_batch_state])
-			# print(batch_action_index)
-			# print([action_set_no(translate_messages_misc(state)) if state is not None else 3 for state in last_batch_state])
-			raise
+		loss = optimize_batch(batch_action_index, batch_reward, loss_func, optimizer, Q_train, next_Q_train, next_Q_eval, gamma)
 
 		batch_action = [select_action(s, n_ep, q0, q1) for (s, q0, q1) in zip(batch_state, Q0, Q1)]
 		batch_action_index, batch_action = [i[1] for i in batch_action], [i[0] for i in batch_action]
-		if 1:
-			from model.explore.glyphs import translate_messages_misc
-			print('Ai new', batch_action_index)
-			print('lA new', [len(actions_list[action_set_no(translate_messages_misc(state))]) if state is not None else 0 for state in batch_state])
-		copy_state(last_batch_state, batch_state, last_batch_state_buffer) # 要在 step 前复制
 
+		copy_state(last_batch_state, batch_state, last_batch_state_buffer) # 要在 step 前复制
 		observations = env.step(batch_action) # 注意 batch_state 的元素均指向 env.frcv 的成员的内存，step 会改变 batch_state
 		# from nle_win.batch_nle import EXEC
 		# EXEC('env.render(0)')
-		if 1:
-			from model.explore.glyphs import translate_messages_misc
-			print('lA new', [len(actions_list[action_set_no(translate_messages_misc(state))]) if state is not None else 0 for state in last_batch_state])
 		batch_state = [i.obs if not i.done else None for i in observations] # 更新 None 状态
-		batch_reward = [i.reward for i in observations]
+		batch_reward = [i.reward for i in observations] # 没有什么必要
 
 		[Q0, Q1] = forward_batch(batch_state, [model0, model1])
 		print('loss %10.4f | a '%(loss), bytes(batch_action))
 
 	return last_batch_state, batch_action_index, batch_reward, batch_state, Q0, Q1
 
-def __main__(*, num_epoch:int, batch_size:int, gamma:float, use_gpu:bool, model0_file:str=None, model1_file:str=None):
+def __main__(*, nums_epoch:List[int], batch_size:int, gamma:float, use_gpu:bool, model0_file:str=None, model1_file:str=None):
+	'''
+	隔 num_epoch 轮 optimize 更新一次 loss|score|env 记录和参数文件（缓存/日志？），以防宕机
+	main 函数执行完后保存参数为文件名带总 epoch 数、时间戳、模型和环境参数的新文件
+	'''
 	from torch import nn
 	device = torch.device("cuda" if use_gpu and torch.cuda.is_available() else "cpu")
 	model0:DQN = torch.load(model0_file) if model0_file is not None else DQN(device, len(actions_ynq), len(actions_normal))
@@ -231,17 +213,15 @@ def __main__(*, num_epoch:int, batch_size:int, gamma:float, use_gpu:bool, model0
 	batch_state, batch_action_index = env.step(batch_action_index[0]), batch_action_index[1] # 这里的 batch_state 为临时变量
 	batch_state, batch_reward = [i.obs if not i.done else None for i in batch_state], [i.reward for i in batch_state]
 
-	n = num_epoch
-	N = 3*n
-	for start_epoch in range(0, N, n):
+	start_epoch = 0
+	for num_epoch in nums_epoch:
+		start_epoch += num_epoch
 		last_batch_state, batch_action_index, batch_reward, batch_state, Q0, Q1 = train_n_batch( # one period
-			start_epoch, n, env, model0, model1, loss_func, optimizer0, optimizer1,
+			start_epoch, num_epoch, env, model0, model1, loss_func, optimizer0, optimizer1,
 			last_batch_state, batch_action_index, batch_reward, batch_state, # reset all env, do not use input q
 			Q0, Q1, # Q[i] will not be visited if state[i] is None
 			gamma,
 		)
-		# for i in (last_batch_state, batch_action_index, batch_reward, batch_state, Q0, Q1):
-		# 	print(i)
 		# TODO: 保存，定期全量备份，合适的函数名
 
 	disconnect()
@@ -256,4 +236,4 @@ if __name__ == '__main__':
 	gamma = 1
 	use_gpu = False
 	# torch.autograd.set_detect_anomaly(True) # DEBUG
-	models = __main__(num_epoch=num_epoch, batch_size=batch_size, gamma=gamma, use_gpu=use_gpu)
+	models = __main__(nums_epoch=[num_epoch]*2, batch_size=batch_size, gamma=gamma, use_gpu=use_gpu)

@@ -44,7 +44,7 @@ def terminate():
 	from os import system, listdir
 	cmd = "rm {} {}".format(main.p_a, main.p_b)
 	if system(cmd): raise Exception('fail to '+cmd)
-	if listdir(init.fifodir)==0:
+	if len(listdir(init.fifodir))==0:
 		cmd = "rm -r "+init.fifodir
 		if system(cmd): raise Exception('fail to '+cmd)
 

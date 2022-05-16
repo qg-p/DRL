@@ -129,7 +129,7 @@ def forward_batch(
 	non_final_mask = [s is not None for s in batch_state]
 	if any(non_final_mask):
 		INPUT_batch_state = [s for s in batch_state if s is not None] # non final state batch
-		INPUT_RNN_STATE = [rnn_state for (rnn_state, s) in zip(RNN_STATE, batch_state) if s is not None]
+		INPUT_RNN_STATE = [[rnn_state for (rnn_state, s) in zip(RNN_state, batch_state) if s is not None] for RNN_state in RNN_STATE]
 
 		OUTPUT = [model.forward(INPUT_batch_state, rnn_state) for (model, rnn_state) in zip(models, INPUT_RNN_STATE)]
 		# RETURN_Q[non_final_mask] = OUTPUT_Q

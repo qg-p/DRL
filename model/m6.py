@@ -12,7 +12,7 @@ from torch import nn
 from model.DQN import action_set_no
 from model.m5 import actions_list, actions_ynq, actions_inv, actions_normal
 
-from model.DQN_LSTM import DQN_LSTM
+from model.DQN_RNN import DQN_LSTM
 
 use_gpu = False
 device = torch.device('gpu' if torch.cuda.is_available() and use_gpu else 'cpu')

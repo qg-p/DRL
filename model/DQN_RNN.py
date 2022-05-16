@@ -52,3 +52,36 @@ class DQN_LSTM(DQN):
 		y, (_, _, _, inv_55_6, misc_6), LSTM_states = self._forward_y(obs_batch, LSTM_states)
 		Q = self._forward_actions(y, inv_55_6, misc_6)
 		return Q, LSTM_states
+
+class DQN_RNN(DQN):
+	def __init__(self, device, n_actions_ynq:int, n_actions_normal:int):
+		super().__init__(device, n_actions_ynq, n_actions_normal)
+		self.RNN = nn.Sequential(
+			nn.Linear(128, 128), nn.Sigmoid(),
+			nn.Linear(128, 64), nn.ReLU(inplace=True),
+			nn.Linear(64, 64), nn.ReLU(inplace=True),
+			nn.Linear(64, 64), nn.ReLU(inplace=True),
+			nn.Linear(64, 64), nn.ReLU(inplace=True),
+		)
+	def initial_RNN_state(self):
+		return torch.zeros(64)
+	from typing import List
+	def _forward_y(self, obs_batch:List[nle.basic.obs.observation], RNN_states:List[torch.Tensor]):
+		assert len(obs_batch) == len(RNN_states)
+		RNN_states = torch.stack(RNN_states) # [batch_size][64]
+		y, l = super()._forward_y(obs_batch)
+
+		RNN_input = torch.cat((y, RNN_states), axis=1) # [batch_size][128]
+		RNN_output:torch.Tensor = self.RNN.forward(RNN_input) # [batch_size][64]
+		y = RNN_output + y # 防止梯度消失或爆炸
+
+		RNN_states = y.detach() # 将输出 y 作为 RNN 隐藏状态（一点也没有隐藏的意思）
+		RNN_states = [*RNN_states] # [Tensor([64])]*batch_size
+
+		return y, l, RNN_states
+
+	def forward(self, obs_batch:List[nle.basic.obs.observation], RNN_states:List[torch.tensor]):
+		''' output: max_{action}(Q(obs)[action]), RNN_state batch '''
+		y, (_, _, _, inv_55_6, misc_6), RNN_states = self._forward_y(obs_batch, RNN_states)
+		Q = self._forward_actions(y, inv_55_6, misc_6)
+		return Q, RNN_states
