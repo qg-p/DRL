@@ -54,30 +54,39 @@ class DQN_LSTM(DQN):
 		return Q, LSTM_states
 
 class DQN_RNN(DQN):
+	class RNN_Module(nn.Module):
+		def __init__(self):
+			super().__init__()
+			self.network = nn.Sequential(
+				nn.Linear(128, 128), nn.Sigmoid(),
+				nn.Linear(128, 64), nn.ReLU(inplace=True),
+				nn.Linear(64, 64), nn.ReLU(inplace=True),
+				nn.Linear(64, 64), nn.ReLU(inplace=True),
+				nn.Linear(64, 64), nn.ReLU(inplace=True),
+			)
+		def initial_state(self):
+			return torch.zeros(64)
+		def forward(self, y:torch.Tensor, RNN_states:torch.Tensor):
+			RNN_input = torch.cat((y, RNN_states), axis=1) # [batch_size][128]
+			RNN_output:torch.Tensor = self.network.forward(RNN_input) # [batch_size][64]
+			y = RNN_output + y # 防止梯度消失或爆炸
+			RNN_states = y.detach() # 将输出 y 作为 RNN 隐藏状态（一点也没有隐藏的意思）
+			return y, RNN_states
+
 	def __init__(self, device, n_actions_ynq:int, n_actions_normal:int):
 		super().__init__(device, n_actions_ynq, n_actions_normal)
-		self.RNN = nn.Sequential(
-			nn.Linear(128, 128), nn.Sigmoid(),
-			nn.Linear(128, 64), nn.ReLU(inplace=True),
-			nn.Linear(64, 64), nn.ReLU(inplace=True),
-			nn.Linear(64, 64), nn.ReLU(inplace=True),
-			nn.Linear(64, 64), nn.ReLU(inplace=True),
-		)
+		self.RNN = DQN_RNN.RNN_Module()
 	def initial_RNN_state(self):
-		return torch.zeros(64)
+		return self.RNN.initial_state()
 	from typing import List
 	def _forward_y(self, obs_batch:List[nle.basic.obs.observation], RNN_states:List[torch.Tensor]):
 		assert len(obs_batch) == len(RNN_states)
 		RNN_states = torch.stack(RNN_states) # [batch_size][64]
+
 		y, l = super()._forward_y(obs_batch)
+		y, RNN_states = self.RNN.forward(y, RNN_states)
 
-		RNN_input = torch.cat((y, RNN_states), axis=1) # [batch_size][128]
-		RNN_output:torch.Tensor = self.RNN.forward(RNN_input) # [batch_size][64]
-		y = RNN_output + y # 防止梯度消失或爆炸
-
-		RNN_states = y.detach() # 将输出 y 作为 RNN 隐藏状态（一点也没有隐藏的意思）
 		RNN_states = [*RNN_states] # [Tensor([64])]*batch_size
-
 		return y, l, RNN_states
 
 	def forward(self, obs_batch:List[nle.basic.obs.observation], RNN_states:List[torch.tensor]):
