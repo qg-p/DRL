@@ -9,10 +9,10 @@ import nle_win as nle
 import torch
 from torch import nn
 
-from model.DQN import action_set_no
-from model.m5 import actions_list, actions_ynq, actions_inv, actions_normal
+from model_test.DQN import action_set_no
+from model_test.m5 import actions_list, actions_ynq, actions_inv, actions_normal
 
-from model.DQN_RNN import DQN_LSTM
+from model_test.DQN_RNN import DQN_LSTM
 
 use_gpu = False
 device = torch.device('gpu' if torch.cuda.is_available() and use_gpu else 'cpu')
@@ -33,7 +33,7 @@ def select_action(
 		action_index:int = 0 # Q[i]=[0] if state[i] is None
 		action:int = 255 # reset env
 	else:
-		from explore.glyphs import translate_messages_misc
+		from model_test.explore.glyphs import translate_messages_misc
 		no_action_set = action_set_no(translate_messages_misc(state))
 
 		EPS_INCR = 2.

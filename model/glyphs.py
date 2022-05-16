@@ -1,20 +1,5 @@
-def __main__():
-	import time
-	t = time.process_time()
-	for glyph in range(5976): glyph_translate(glyph)
-	t = time.process_time() - t
-	for i, g in enumerate(_descr): # 测试是否为划分
-		u, v = glyph_translate(g.start)[2], glyph_translate(g.end-1)[2]
-		if (u.split('#')[0]!=v.split('#')[0]):
-			print('error')
-			print(i, u, v)
-	print(i+1)
-	print('time', t, 's')
-	# for i in _descr: print(i)
-
-import enum
-
-class glyph_type(enum.IntEnum):
+from enum import IntEnum
+class glyph_type(IntEnum):
 	monster=0 # can attack
 	food=1 # usually edible
 	weapon=2 # left hand / right hand
@@ -125,9 +110,6 @@ def _get_descr():
 		(n_mon  , 'monster statue'     , glyph_type.tool),
 		(1      , 'empty'              , glyph_type.no_item),
 	)
-	# class Tree: # 线段树？
-	# 	def __init__(self, l_child:Tree=None, r_child:Tree=None):
-	# 		pass
 	descr:list[Descr] = [None]*len(index)
 	start = 0
 	for i, (n, s, t) in enumerate(index):
@@ -158,8 +140,7 @@ def glyph_translate(glyph:int):
 	i = match_descr(glyph)
 	desc = _descr[i](glyph)
 	return i, _descr[i], *desc
-import enum
-class terrain_type(enum.IntEnum):
+class terrain_type(IntEnum):
 	item=6 # might be anything
 	trap=5 # usually cause damage
 	room=4 # passable from all 8 directions
@@ -176,26 +157,33 @@ _gt[glyph_type.room]=_gt[glyph_type.stair]=terrain_type.room
 _gt[glyph_type.door]=terrain_type.door
 _gt[glyph_type.trap]=_gt[glyph_type.liquid]=_gt[glyph_type.explosion]=_gt[glyph_type.zap_beam]=terrain_type.trap
 
-if __name__ == '__main__':
-	import os, sys
-	p=os.path.normpath(os.path.dirname(__file__)+'/../..')
-	sys.path.append(p)
-	del os, sys
-from nle_win.basic.core.obs.recv import observation as obs
-from ctypes import c_short, c_uint8
-import numpy as np
-# output: array[4][21][79]
-# array[0]: descr no
-# array[1]: descr offset
-# array[2]: glyph_type
-# array[3]: terrain_type
-def translate_glyph(glyph:int):
+def _translate_glyph(glyph:int):
 	no = match_descr(glyph)
 	offset = glyph-_descr[no].start
 	g_type = _descr[no].type
 	t_type = _gt[g_type.value]
 	return no, offset, g_type, t_type
-def translate_glyphs(obs:obs):
+
+from ctypes import c_short
+def _get_glyph_array():
+	glyph_list = [_translate_glyph(glyph) for glyph in range(_descr[len(_descr)-1].end)]
+	_glyph_array = (c_short*4*_descr[len(_descr)-1].end)()
+	for i, src in enumerate(glyph_list):
+		_glyph_array[i] = src
+	return _glyph_array
+_glyph_array = _get_glyph_array()
+def translate_glyph(glyph:int)->c_short*4: # 原有实现太低效了。CUDA 负载很低，但是 CPU 满载。
+	return _glyph_array[glyph]
+
+if __name__ == '__main__':
+	import os, sys
+	p=os.path.normpath(os.path.dirname(__file__)+'/../..')
+	sys.path.append(p)
+	del os, sys
+import nle_win as nle
+def translate_glyphs(obs:nle.basic.obs.observation):
+	from ctypes import c_uint8
+	import numpy as np
 	glyphs_21_79 = obs.glyphs
 	glyphs = np.array(glyphs_21_79)
 	h, w = len(glyphs_21_79), len(glyphs_21_79[0])
@@ -205,13 +193,13 @@ def translate_glyphs(obs:obs):
 			row_a[0][i], row_a[1][i], row_a[2][i], row_a[3][i] = translate_glyph(glyph)
 	return a
 
-def translate_inv(obs:obs):
+def translate_inv(obs:nle.basic.obs.observation):
 	inv_strs_55 = obs.inv_strs
 	inv_glyphs_55 = obs.inv_glyphs
 	inv_oclasses_55 = obs.inv_oclasses
 	inv_size = len(inv_strs_55)
 	from ctypes import string_at
-	class BUC_status(enum.IntEnum):
+	class BUC_status(IntEnum):
 		unknown=0
 		uncursed=1
 		cursed=2
@@ -246,7 +234,7 @@ def translate_inv(obs:obs):
 			no, offset, g_type,
 		]
 	return translation
-def translate_messages_misc(obs:obs):
+def translate_messages_misc(obs:nle.basic.obs.observation):
 	message_256 = obs.message
 	misc_3 = obs.misc
 	from ctypes import string_at
@@ -257,49 +245,27 @@ def translate_messages_misc(obs:obs):
 		misc[0], # whether an item is required
 		misc[1], # 0 or 1 # use enter to skip # message_has_more or misc[1]
 		misc[2], # use space or enter to skip
-		int('? [' in message and ']' in message), # such as 'Really quit? [yn] (n)', 'What do you want to wield? [- a or *?]'
+		int('? [' in message), # and ']' in message), # such as 'Really quit? [yn] (n)', 'What do you want to wield? [- a or *?]'
 		int('? [yn' in message), # y/n/q question
-		int('?' in message), # This door is locked, It turns to be locked, The chest is locked
+		int('?' in message),
 	]
 	return translation
-def allowed_char(obs:obs): # e.g. [- abh-CYZ] -> - a b h~C Y Z
-	def letter_index(ch:str): # 0:IsNotLetter, 1-26:a-z, 27-52:A-Z
-		ch = ord(ch)
-		a, z, A, Z = ord('a'), ord('z'), ord('A'), ord('Z')
-		i = 1
-		n = z-a+1
-		if ch>=A and ch<=Z:
-			i += n + ch-A
-		elif ch>=a and ch<=z:
-			i += ch-a
-		else:
-			i -= 1
-		return i
-
-	l = [False] * (26+26+1) # -, a-z, A-Z
-	from ctypes import string_at
-	message = string_at(obs.message)
-	try:
-		start, end = message.index('[')+1, message.index(']')
-	except:
-		return l
-	i = start
-	while i < end:
-		ch = message[i]
-		if ch == '-':
-			_prev, _next = letter_index(message[i-1]), letter_index(message[i+1])
-			if _prev and _next:
-				l[0] = True
-			else:
-				for i in range(_prev, _next+1):
-					l[i] = True
-		else:
-			ch = letter_index(ch)
-			if ch:
-				l[ch] = True
-	return l
 
 if __name__ == '__main__':
+	def __main__():
+		import time
+		t = time.process_time()
+		for glyph in range(5976): glyph_translate(glyph)
+		t = time.process_time() - t
+		for i, g in enumerate(_descr): # 测试是否为划分
+			u, v = glyph_translate(g.start)[2], glyph_translate(g.end-1)[2]
+			if (u.split('#')[0]!=v.split('#')[0]):
+				print('error')
+				print(i, u, v)
+		print(i+1)
+		print('time', t, 's')
+		# for i in _descr: print(i)
+
 	__main__()
-	o=obs()
+	o=nle.basic.obs.observation()
 	print(translate_glyphs(o))

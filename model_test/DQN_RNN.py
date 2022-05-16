@@ -7,7 +7,7 @@ import nle_win as nle
 import torch
 from torch import nn
 
-from model.DQN import DQN
+from model_test.DQN import DQN
 class DQN_LSTM(DQN):
 	# 在 DQN 的基础上加一 LSTM。64 为 Q[2] 的输入通道数以及 Q[1][0] 的输入通道数，即中间变量 y 的通道数。
 	# 该 LSTM 不改变 Q[1] Q[2] 间的输入输出通道数 (64)，嵌入位置为 Q[1][1]，串行。

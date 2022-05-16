@@ -6,8 +6,8 @@ if __name__=='__main__':
 在 m7 的基础上使用 DQN_RNN，即考虑中间状态。
 '''
 
-from model.DQN import action_set_no
-from model.DQN_RNN import DQN_RNN, nle, torch
+from model_test.DQN import action_set_no
+from model_test.DQN_RNN import DQN_RNN, nle, torch
 
 actions_ynq = [ord(ch) for ch in [
 	'\x1b', 'y', 'n', '*',
@@ -42,7 +42,7 @@ def select_action(
 		action_index:int = None # Q[i]=[0] if state[i] is None
 		action:int = 255 # reset env
 	else:
-		from model.explore.glyphs import translate_messages_misc
+		from model_test.explore.glyphs import translate_messages_misc
 		no_action_set = action_set_no(translate_messages_misc(state))
 
 		EPS_INCR = 2.
@@ -157,7 +157,7 @@ def train_n_batch(
 ): # ((None, None, None), (None, R1, S1), ..., (Ai, Ri, Si), (Aj, Rj, None), (None, Rk, Sk), ...)
 	from random import randint
 	for n_ep in range(start_epoch, start_epoch+num_epoch):
-		print('epoch %-6d'%(n_ep))
+		# print('epoch %-6d'%(n_ep))
 
 		batch_action = [select_action(s, n_ep, q0, q1) for (s, q0, q1) in zip(batch_state, Q0, Q1)]
 		batch_action_index, batch_action = [i[1] for i in batch_action], [i[0] for i in batch_action]
@@ -181,13 +181,13 @@ def train_n_batch(
 			(Q1, Q0, ),
 		)[no]
 		loss = optimize_batch(batch_action_index, batch_reward, loss_func, optimizer, Q_train, next_Q_train, next_Q_eval, gamma)
-		print('loss %10.4f | a '%(loss), bytes(batch_action))
+		print('%10.4e | %s'%(loss, bytes(batch_action).replace(b'\xff', b'!').replace(b'\x1b', b'Q').replace(b'\x04', b'D').replace(b'\r', b'N').decode()))
 		# from nle_win.batch_nle import EXEC
 		# EXEC('env.render(0)')
 
 	return batch_state, Q0, Q1, RNN_STATE0, RNN_STATE1, last_RNN_STATE0, last_RNN_STATE1
 
-def __main__(*, nums_epoch:List[int], batch_size:int, gamma:float, use_gpu:bool, model0_file:str=None, model1_file:str=None):
+def __main__(*, nums_epoch:List[int], batch_size:int, gamma:float, use_gpu:bool, model0_file:str=None, model1_file:str=None, log_file:str=None):
 	'''
 	隔 num_epoch 轮 optimize 更新一次 loss|score|env 记录和参数文件（缓存/日志？），以防宕机
 	main 函数执行完后保存参数为文件名带总 epoch 数、时间戳、模型和环境参数的新文件
@@ -241,9 +241,11 @@ def pretrain():
 	raise Exception('TODO')
 
 if __name__ == '__main__':
-	batch_size = 4 # 128 会爆显存
-	num_epoch = 3
-	gamma = 1#.995
-	use_gpu = False
+	batch_size = 64 # 128 会爆显存
+	num_epoch = 4
+	gamma = .995
+	use_gpu = True
+
+	torch.cuda.set_per_process_memory_fraction(1.)
 	# torch.autograd.set_detect_anomaly(True) # DEBUG
 	models = __main__(nums_epoch=[num_epoch]*4, batch_size=batch_size, gamma=gamma, use_gpu=use_gpu)

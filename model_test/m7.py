@@ -6,8 +6,8 @@ if __name__=='__main__':
 # 由于技术原因（调了整整半天的BUG）不使用 LSTM
 # 更正，是一天半。python 的内存管理和 C 相差很大，且难以区分引用和变量。
 
-from model.DQN import action_set_no
-from model.DQN import DQN, nle, torch
+from model_test.DQN import action_set_no
+from model_test.DQN import DQN, nle, torch
 
 actions_ynq = [ord(ch) for ch in [
 	'\x1b', 'y', 'n', '*',
@@ -42,7 +42,7 @@ def select_action(
 		action_index:int = None # Q[i]=[0] if state[i] is None
 		action:int = 255 # reset env
 	else:
-		from model.explore.glyphs import translate_messages_misc
+		from model_test.explore.glyphs import translate_messages_misc
 		no_action_set = action_set_no(translate_messages_misc(state))
 
 		EPS_INCR = 2.

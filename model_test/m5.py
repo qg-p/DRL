@@ -4,9 +4,9 @@ if __name__=='__main__':
 	del os, sys
 # DQN_LSTM 的 Double DQN 训练样板。
 
-from model.DQN import action_set_no
-from model.DQN_RNN import DQN_LSTM, nle, torch
-from model.replay_memory import Transition
+from model_test.DQN import action_set_no
+from model_test.DQN_RNN import DQN_LSTM, nle, torch
+from model_test.replay_memory import Transition
 
 actions_ynq = [ord(ch) for ch in [
 	'\x1b', 'y', 'n', '*',
@@ -41,7 +41,7 @@ def select_action(
 		action_index:int = 0 # Q[i]=[0] if state[i] is None
 		action:int = 255 # reset env
 	else:
-		from explore.glyphs import translate_messages_misc
+		from model_test.explore.glyphs import translate_messages_misc
 		no_action_set = action_set_no(translate_messages_misc(state))
 
 		EPS_INCR = 2.

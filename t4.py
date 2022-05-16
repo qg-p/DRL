@@ -12,8 +12,8 @@ def Exec():
 if __name__ == '__main__':
 	from nle_win.batch_nle import connect, disconnect, EXEC, batch, terminate
 	import numpy as np
-	from model.DQN import action_set_no
-	from model.explore.glyphs import translate_messages_misc
+	from model_test.DQN import action_set_no
+	from model_test.explore.glyphs import translate_messages_misc
 	connect()
 	env = batch(1, 'character="Val-Hum-Fem-Law", savedir=None, penalty_step=-0.01')
 	print('start')
