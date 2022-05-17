@@ -48,7 +48,7 @@ def forward(state:nle.basic.obs.observation, RNN_STATE:torch.Tensor, model:DRQN)
 	([RETURN_Q], [RETURN_RNN_STATE]) = ([None], [model.initial_RNN_state()]) if state is None else model.forward([state], [RNN_STATE])
 	return RETURN_Q, RETURN_RNN_STATE
 
-from model.memory_replay.files import try_to_cover_file, save_parameter_tmpfile, logfilexz_save_loss, logfilexz_read_loss
+from model.memory_replay.files import try_to_create_file, iter_tmpfile, logfilexz_save_float, logfilexz_load_float
 def replay_train(*,
 	filename_dataset_xz:str,
 	filename_parameter0_out:str, filename_parameter1_out:str,
@@ -58,16 +58,16 @@ def replay_train(*,
 	gamma:float
 ):
 	assert n_episodes <= len(LR_list)
-	if (try_to_cover_file(log_file_xz)): return
-	if (try_to_cover_file(filename_parameter0_out)): return
-	if (try_to_cover_file(filename_parameter1_out)): return
+	assert try_to_create_file(log_file_xz)
+	assert try_to_create_file(filename_parameter0_out)
+	assert try_to_create_file(filename_parameter1_out)
 
-	model0 = DRQN(torch.device('cpu'))
-	model1 = DRQN(torch.device('cpu'))
+	model0 = DRQN(torch.device('cuda'))
+	model1 = DRQN(torch.device('cuda'))
 	if filename_parameter0_in is not None: model0.load(filename_parameter0_in)
 	if filename_parameter1_in is not None: model1.load(filename_parameter1_in)
-	model0.requires_grad_(False)
-	model1.requires_grad_(False)
+	# model0.requires_grad_(False)
+	# model1.requires_grad_(False)
 
 	loss_func = torch.nn.SmoothL1Loss()
 
@@ -78,7 +78,14 @@ def replay_train(*,
 	from random import randint
 
 	losses = []
-	tmpfile = [None, None]
+	tmpfile = [None, None, None]
+	# optimized_test = [tuple(
+	# 	[
+	# 		(output[0][0].detach(), torch.stack(output[1][0]).detach())
+	# 		for output in [model.forward([dataset[0].state], [model.initial_RNN_state()])]
+	# 	][0]
+	# 	for model in (model0, model1)
+	# )]
 	for episode in range(n_episodes):
 		optimizer0 = torch.optim.Adam(model0.parameters(), lr=LR_list[episode])
 		optimizer1 = torch.optim.Adam(model1.parameters(), lr=LR_list[episode])
@@ -91,6 +98,7 @@ def replay_train(*,
 		last_RNN_STATE0 = None
 		last_RNN_STATE1 = None
 		action_index = index_of_action(state, action)
+		losses_n = []
 		for n_ep in range(len(dataset)-1):
 			# copy_state(last_batch_state, batch_state, last_batch_state_buffer) # 要在 step 前复制
 			no = randint(0, 1)
@@ -98,9 +106,9 @@ def replay_train(*,
 				(optimizer0, model0, last_RNN_STATE0, ),
 				(optimizer1, model1, last_RNN_STATE1, ),
 			)[no]
-			model.requires_grad_(True)
+			# model.requires_grad_(True)
 			Q_train, _ = forward(state, RNN_STATE, model)
-			model.requires_grad_(False)
+			# model.requires_grad_(False)
 
 			line = dataset[n_ep]
 			reward, action = line.reward, line.action
@@ -115,54 +123,91 @@ def replay_train(*,
 				(Q1, Q0, ),
 			)[no]
 			loss = optimize(action_index, reward, loss_func, optimizer, Q_train, next_Q_train, next_Q_eval, gamma)
-			if n_ep % 10 == 0:
-				print('%6d | %10.4e'%(n_ep, loss))#, bytes([action]).replace(b'\xff', b'!').replace(b'\x1b', b'Q').replace(b'\x04', b'D').replace(b'\r', b'N').decode()))
+			losses_n.append(loss)
+			if n_ep % 50 == 49: #, bytes([action]).replace(b'\xff', b'!').replace(b'\x1b', b'Q').replace(b'\x04', b'D').replace(b'\r', b'N').decode()))
+				print('%6d | %10.4e %10.4e %10.4e'%(n_ep+1, max(losses_n), min(losses_n), sum(losses_n)/len(losses_n)))
+				losses += losses_n
+				losses_n = []
 			# from nle_win.batch_nle import EXEC
 			# EXEC('env.render(0)')
-			losses.append(loss)
+
+		print('%6d | %10.4e %10.4e %10.4e'%(n_ep+1, max(losses_n), min(losses_n), sum(losses_n)/len(losses_n)))
+		losses += losses_n
+		losses_n = []
 
 		# save tmpfile
 		import os
 		try:
-			datdir = os.path.dirname(__file__)+'/dat/'
+			datdir = os.path.dirname(__file__)+'/dat'
 		except:
-			datdir = os.getcwd()+'/dat/'
+			datdir = os.getcwd()+'/dat'
+		datdir = os.path.normpath(datdir) + '\\'
 		del os
-		time = format_time()
-		tmpfile_new = ' Episode %d Epoch %d Time [%s].pt'%(episode, n_ep, time)
-		tmpfile_new = (datdir+'DRQN0'+tmpfile_new, datdir+'DRQN1'+tmpfile_new)
-		del time
+		curtime = format_time()
+		tmpfile_new = '[%s]Eps%d_Epc%d'%(curtime, episode, n_ep)
+		tmpfile_new = (
+			datdir+tmpfile_new+'DRQN0.pt',
+			datdir+tmpfile_new+'DRQN1.pt',
+			datdir+tmpfile_new+'loss.log.xz',
+		)
+		del curtime
 		try: # 写入失败则 tmpfile 不更新
-			if save_parameter_tmpfile(model0, tmpfile_new[0], tmpfile[0], force_write=False, do_not_cover=True):
-				tmpfile[0] = tmpfile_new[0]
+			assert iter_tmpfile(tmpfile_new[0], tmpfile[0], force_write=False, do_not_cover=True)
+			tmpfile[0] = tmpfile_new[0]
+			model0.save(tmpfile[0])
 		except: pass
 		try:
-			if save_parameter_tmpfile(model1, tmpfile_new[1], tmpfile[1], force_write=False, do_not_cover=True):
-				tmpfile[1] = tmpfile_new[1]
+			assert iter_tmpfile(tmpfile_new[1], tmpfile[1], force_write=False, do_not_cover=True)
+			tmpfile[1] = tmpfile_new[1]
+			model1.save(tmpfile[1])
+		except: pass
+		try:
+			assert iter_tmpfile(tmpfile_new[2], tmpfile[2], force_write=False, do_not_cover=True)
+			tmpfile[2] = tmpfile_new[2]
+			logfilexz_save_float(tmpfile[2], losses)
 		except: pass
 		del tmpfile_new
+
+	# optimized_test += [tuple(
+	# 	[
+	# 		(output[0][0].detach(), torch.stack(output[1][0]).detach())
+	# 		for output in [model.forward([dataset[0].state], [model.initial_RNN_state()])]
+	# 	][0]
+	# 	for model in (model0, model1)
+	# )]
+	# print('model0 optimized:', (optimized_test[0][0][0]!=optimized_test[1][0][0]).any().item())
+	# print('model1 optimized:', (optimized_test[0][1][0]!=optimized_test[1][1][0]).any().item())
+	# print('model0 RNN optimized:', (optimized_test[0][0][1]!=optimized_test[1][0][1]).any().item())
+	# print('model1 RNN optimized:', (optimized_test[0][1][1]!=optimized_test[1][1][1]).any().item())
 	# save parameters file
-	if not save_parameter_tmpfile(model0, filename_parameter0_out, tmpfile[0], force_write=True):
-		print('Fail to save model0.')
-	if not save_parameter_tmpfile(model1, filename_parameter1_out, tmpfile[1], force_write=True):
-		print('Fail to save model1.')
-	logfilexz_save_loss(log_file_xz, losses)
-	losses = logfilexz_read_loss(log_file_xz)
-	from matplotlib import pyplot as plt
-	plt.plot(losses, marker='.', markersize=1, linewidth=0)
-	plt.show()
+	try:
+		assert iter_tmpfile(filename_parameter0_out, tmpfile[0], force_write=True)
+		model0.save(filename_parameter0_out)
+	except: print('Fail to save model0.')
+	try:
+		assert iter_tmpfile(filename_parameter1_out, tmpfile[1], force_write=True)
+		model1.save(filename_parameter1_out)
+	except: print('Fail to save model1.')
+	try:
+		assert iter_tmpfile(log_file_xz, tmpfile[2], force_write=True)
+		logfilexz_save_float(log_file_xz, losses)
+		losses = logfilexz_load_float(log_file_xz)
+		from matplotlib import pyplot as plt
+		plt.plot(losses, marker='.', markersize=1, linewidth=0)
+		plt.show()
+	except: print('Fail to W/R loss logfile "{}"'.format(log_file_xz))
 
 if __name__ == '__main__':
 	from model import setting
 	import os
-	time = 'test'#format_time()
+	curtime = format_time() # 'test'
 	datdir = os.path.dirname(__file__)+'/dat/'
 	filename_dataset_xz = datdir + '1-Val-Hum-Fem-Law.ARS.dat.xz'
-	filename_parameter0_out = datdir + 'model0[{}].pt'.format(time)
-	filename_parameter1_out = datdir + 'model1[{}].pt'.format(time)
-	log_file_xz = datdir + 'loss[{}].log.xz'.format(time)
-	del os, time
-	LR_list = [0.01]*4+[0.5]*8+[0.01]*12
+	filename_parameter0_out = datdir + '[{}]model0.pt'.format(curtime)
+	filename_parameter1_out = datdir + '[{}]model1.pt'.format(curtime)
+	log_file_xz = datdir + '[{}]loss.log.xz'.format(curtime)
+	del os, curtime
+	LR_list = [0.01]*2+[0.5]*4+[0.1]*8+[0.01]*6
 	n_episodes = len(LR_list)
 	replay_train(
 		filename_dataset_xz=filename_dataset_xz,

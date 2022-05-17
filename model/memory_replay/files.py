@@ -1,4 +1,4 @@
-def try_to_cover_file(filename:str):
+def try_to_create_file(filename:str):
 	import os
 	if os.path.isfile(filename):
 		filesize = os.path.getsize(filename)
@@ -18,18 +18,16 @@ def try_to_cover_file(filename:str):
 		if not len(action): action = 'n' if notEmptyFile else 'y' # default action
 		yes = action[0] in 'yY' if notEmptyFile else action[0] not in 'nN' # do not deny
 		if yes: print('"{}" will be covered.'.format(filename))
-		else: return True
+		else: return False
 	else:
-		open(filename, 'wb').close() # can create
-	return False
+		pass # open(filename, 'wb').close() # can create
+	return True
 
-def save_parameter_tmpfile(
-	model, filename:str, past_filename:str=None,
+def iter_tmpfile(
+	filename:str, past_filename:str=None,
 	*, force_write:bool=False, do_not_cover:bool=False
 ):
 	'''
-	model:
-		要保存参数的模型
 	filename:
 		新临时文件名，要保存到的文件名
 	past_filename:
@@ -60,29 +58,48 @@ def save_parameter_tmpfile(
 	if past_filename is None:
 		last_filename = filename
 	else: last_filename = past_filename
-	# 不是同一文件，移动
-	if not os.path.samefile(filename, last_filename):
+	# 旧文件存在且不是新文件，移动
+	if os.path.exists(last_filename) and not (os.path.exists(filename) and os.path.samefile(filename, last_filename)):
+		if os.path.exists(filename):
+			os.remove(filename)
 		os.rename(last_filename, filename)
 	# 否则是同一文件，past_filename 为 None 或确实是一个文件，不重命名
-	model.save(filename)
 	return True
 
 from typing import List
-def logfilexz_save_loss(filename:str, losses:List[float]):
-	'''
-	直接存储 double (8B)，xzip 格式
-	'''
+def logfilexz_save_float(filename:str, floats:List[float]):
+	'''直接存储 double (8B)，xzip 格式'''
 	from dataset.xzfile import xz_file
 	logfile = xz_file(filename, WR_ONLY=True)
 	from ctypes import c_double
 	double = c_double()
-	for loss in losses:
-		double.value=loss
+	for Float in floats:
+		double.value=Float
 		logfile.append(bytes(double))
 	logfile.close()
-	del logfile, c_double, double
 
-def logfilexz_read_loss(log_file_xz:str):
+def logfilexz_load_float(log_file_xz:str):
+	from dataset.xzfile import xz_file
+	file = xz_file(log_file_xz, RD_ONLY=True)
+	from ctypes import c_double, sizeof
+	floats = file.read()
+	floats = (c_double*(len(floats)//sizeof(c_double))).from_buffer_copy(floats)
+	floats = [*floats]
+	return floats
+
+
+def logfilexz_save_int(filename:str, ints:List[int]):
+	'''直接存储 int (4B)，xzip 格式'''
+	from dataset.xzfile import xz_file
+	logfile = xz_file(filename, WR_ONLY=True)
+	from ctypes import c_int
+	long = c_int()
+	for Int in ints:
+		long.value=Int
+		logfile.append(bytes(long))
+	logfile.close()
+
+def logfilexz_load_int(log_file_xz:str):
 	from dataset.xzfile import xz_file
 	file = xz_file(log_file_xz, RD_ONLY=True)
 	from ctypes import c_double, sizeof

@@ -29,10 +29,10 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 loss_func = nn.MSELoss()
 # train
 inputs = [
-	[[1], [2], [3]],
+	[[1], [2], [3], [0]],
 	[[1], [0]],
 	[[2], [3], [0]],
-	[[0], [3], [0], [1]],
+	[[0], [3], [0], [1], [0]],
 ]
 for i in inputs:
 	for j, J in enumerate(i):

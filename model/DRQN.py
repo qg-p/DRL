@@ -54,32 +54,32 @@ class Conv(Bottleneck):
 	def forward(self, x):
 		y = self.network(x)
 		return y
-class RNN(nn.Module):
-	'''
-	RNN:
+# class RNN(nn.Module):
+# 	'''
+# 	RNN:
 
-		output = network(cat([input, hidden]))+input;
+# 		output = network(cat([input, hidden]))+input;
 
-		hidden = output.detach();
+# 		hidden = output.detach();
 
-	input:	Tensor([batch size, num channel])
-	output:	Tensor([batch size, num channel])
-	hidden:	Tensor([batch size, num channel])
-	'''
-	def __init__(self, network:nn.Module):
-		'''
-		network:
-			输入 channel=2n，输出 channel=n
-		'''
-		super().__init__()
-		self.network = network
-	def forward(self, y:torch.Tensor, RNN_states:torch.Tensor):
-		RNN_input = torch.cat((y, RNN_states), axis=1) # [batch_size][128]
-		RNN_output:torch.Tensor = self.network.forward(RNN_input) # [batch_size][64]
-		y = RNN_output + y # 防止梯度消失或爆炸
-		RNN_states = y.detach() # 将输出 y 作为 RNN 隐藏状态（一点也没有隐藏的意思）
-		return y, RNN_states
-	# INITIAL_RNN_STATE = torch.zeros(64)
+# 	input:	Tensor([batch size, num channel])
+# 	output:	Tensor([batch size, num channel])
+# 	hidden:	Tensor([batch size, num channel])
+# 	'''
+# 	def __init__(self, network:nn.Module):
+# 		'''
+# 		network:
+# 			输入 channel=2n，输出 channel=n
+# 		'''
+# 		super().__init__()
+# 		self.network = network
+# 	def forward(self, y:torch.Tensor, RNN_states:torch.Tensor):
+# 		RNN_input = torch.cat((y, RNN_states), axis=-1) # [batch_size][128]
+# 		RNN_output:torch.Tensor = self.network.forward(RNN_input) # [batch_size][64]
+# 		y = RNN_output + y # 防止梯度消失或爆炸
+# 		RNN_states = y.detach() # 将输出 y 作为 RNN 隐藏状态（一点也没有隐藏的意思）
+# 		return y, RNN_states
+# 	# INITIAL_RNN_STATE = torch.zeros(64)
 class DRQN(nn.Module):
 	def __init__(self, device, n_actions_ynq:int=len(actions_ynq), n_actions_normal:int=len(actions_normal)) -> None:
 		super().__init__()
@@ -148,13 +148,23 @@ class DRQN(nn.Module):
 					nn.Linear(64, 64), nn.ReLU(inplace=True),
 					nn.Linear(64, 64), nn.ReLU(inplace=True)
 				),
-				RNN(nn.Sequential(
-					nn.Linear(128, 128), nn.Sigmoid(),
-					nn.Linear(128, 64), nn.ReLU(inplace=True),
-					nn.Linear(64, 64), nn.ReLU(inplace=True),
-					nn.Linear(64, 64), nn.ReLU(inplace=True),
-					nn.Linear(64, 64), nn.ReLU(inplace=True),
-				)),
+				# [
+				# 	RNN(nn.Sequential(
+				# 		nn.Linear(128, 128), nn.Sigmoid(),
+				# 		nn.Linear(128, 64), nn.ReLU(inplace=True),
+				# 		nn.Linear(64, 64), nn.ReLU(inplace=True),
+				# 		nn.Linear(64, 64), nn.ReLU(inplace=True),
+				# 		nn.Linear(64, 64), nn.ReLU(inplace=True)
+				# 	)),
+				# 	RNN(nn.Sequential(
+				# 		nn.Linear(128, 128), nn.ReLU(),
+				# 		nn.Linear(128, 64), nn.ReLU(inplace=True),
+				# 		nn.Linear(64, 64), nn.ReLU(inplace=True),
+				# 		nn.Linear(64, 64), nn.ReLU(inplace=True),
+				# 		nn.Linear(64, 64), nn.ReLU(inplace=True)
+				# 	)),
+				# ]
+				nn.LSTM(64, 64, batch_first=False, num_layers=1, bias=True, bidirectional=False),
 			),
 			[ # 输出每个动作对应的 Q 值
 				nn.Sequential( # y/n/q
@@ -209,13 +219,13 @@ class DRQN(nn.Module):
 				for no, hierarchy in enumerate(q):
 					add_q_to_model(self, hierarchy, name+'_'+str(no))
 		add_q_to_model(self, self.Q, 'Q')
-		self.INITIAL_RNN_STATE = torch.zeros(64).to(self.device)
+		self.INITIAL_RNN_STATE = (torch.zeros([1, 64]).to(self.device),)*2
 		self.to(self.device)
 
 	def initial_RNN_state(self):
 		return self.INITIAL_RNN_STATE
 
-	from typing import List
+	from typing import List, Tuple
 	def _forward_y_seq(self, obs_batch:List[nle.basic.obs.observation]):
 		''' output: Q.y(obs) '''
 		from typing import List
@@ -261,21 +271,25 @@ class DRQN(nn.Module):
 		a = a.flatten(1) # [batch_size, 1, 2, 8] -> [batch_size, 16]
 		b = b.flatten(1) # [batch_size, 9]
 
-		y:torch.Tensor = torch.cat([a, b, c], axis=1) # 合并
+		y:torch.Tensor = torch.cat([a, b, c], axis=-1) # 合并
 		# if self.training and len(y)==1: self.Q[1].train(False)
 		y = self.Q[1][0](y) # batch size * 64
 		# if self.training: self.Q[1].train(True)
 		return y, (map_4, srdng5x5_4, blstat_26, inv_55_6, misc_6)
-	def _forward_y(self, obs_batch:List[nle.basic.obs.observation], RNN_states:List[torch.Tensor]):
+	def _forward_y(self, obs_batch:List[nle.basic.obs.observation], RNN_states:List[Tuple[torch.Tensor, torch.Tensor]]):
 		assert len(obs_batch) == len(RNN_states)
-		RNN_states = torch.stack(RNN_states) # [batch_size][64]
+		# RNN_states = torch.stack(RNN_states) # [batch_size][64]
 
 		y, l = self._forward_y_seq(obs_batch)
-		output = self.Q[1][1](y, RNN_states)
-		y:torch.Tensor = output[0]
-		RNN_states = output[1]
 
-		RNN_states = [*RNN_states] # [Tensor([64])]*batch_size
+		h:torch.Tensor = torch.stack(tuple(RNN_state[0] for RNN_state in RNN_states), axis=1)
+		c:torch.Tensor = torch.stack(tuple(RNN_state[1] for RNN_state in RNN_states), axis=1)
+		y = y.unsqueeze(0)
+		y, (h, c) = self.Q[1][1](y, (h, c))
+		y:torch.Tensor = y.squeeze(0)
+		h, c = h.transpose(0, 1).detach(), c.transpose(0, 1).detach() # [batch_size][num_layers][num_channels]
+
+		RNN_states = [*zip(h, c)] # [Tensor([64])]*batch_size
 		return y, l, RNN_states
 
 	def _forward_ynq_action(self, y_batch:torch.Tensor):
@@ -320,7 +334,7 @@ class DRQN(nn.Module):
 			j[misc] += 1
 			Q[i] = r
 		return Q
-	def forward(self, obs_batch:List[nle.basic.obs.observation], RNN_states:List[torch.Tensor]):
+	def forward(self, obs_batch:List[nle.basic.obs.observation], RNN_states:List[Tuple[torch.Tensor, torch.Tensor]]):
 		''' output: max_{action}(Q(obs)[action]) '''
 		y, (_, _, _, inv_55_6, misc_6), RNN_states = self._forward_y(obs_batch, RNN_states)
 		Q = self._forward_actions(y, inv_55_6, misc_6)

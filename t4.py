@@ -32,9 +32,9 @@ if __name__ == '__main__':
 		line = env.step([action[0]])[0]
 		obs, reward, done = line.obs, line.reward, line.done
 		print('blstats: {}'.format([*obs.blstats]))
-		print('inv_letters: {}'.format([*obs.inv_letters]))
+		print('inv_letters: {}'.format(bytes(obs.inv_letters).replace(b'\x00', b'0').decode()))
 		print('misc: {} {} {}'.format([*obs.misc], translate_messages_misc(obs), action_set_no(translate_messages_misc(obs))))
-		print('reward: %g'%(reward))
+		print('reward %g | score %d | T %d'%(reward, obs.blstats[9], obs.blstats[20]))
 		need_redraw = True
 # take action
 	print('done')
