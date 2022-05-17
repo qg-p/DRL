@@ -241,12 +241,20 @@ def translate_messages_misc(obs:nle.basic.obs.observation):
 	message = string_at(message_256).decode()
 	misc = [int(i) for i in misc_3]
 	# message_has_more = '--More--' in message
+	tty_message = bytes(obs.tty_chars[0]) # chatbox is also message
+	tty_message_q_mark   = b'?' in tty_message
+	tty_message_type   = b'type' in tty_message # 'What type ... take off?', 'What do ... take off?'
+	tty_message_take_off = b'take off' in tty_message
+	tty_message_pick_up  = b'Pick up what' in tty_message
+	tty_message_You_read = b'You read: "' in tty_message
+	# 不对 Put in what? 反应
+	use_inv_tty_message = (tty_message_q_mark) and (not tty_message_You_read) and ((tty_message_take_off and not tty_message_type) and (not tty_message_pick_up))
 	translation = [
-		misc[0], # whether an item is required
+		int(misc[0] or use_inv_tty_message), # whether an item is required
 		misc[1], # 0 or 1 # use enter to skip # message_has_more or misc[1]
-		misc[2], # use space or enter to skip
-		int('? [' in message), # and ']' in message), # such as 'Really quit? [yn] (n)', 'What do you want to wield? [- a or *?]'
-		int('? [yn' in message), # y/n/q question
+		misc[2], # chatbox
+		int('? [' in message or use_inv_tty_message), # and ']' in message), # such as 'Really quit? [yn] (n)', 'What do you want to wield? [- a or *?]'
+		int('? [yn' in message or '? [rl' in message), # y/n/q question, wear ring question
 		int('?' in message),
 	]
 	return translation
@@ -255,7 +263,7 @@ if __name__ == '__main__':
 	def __main__():
 		import time
 		t = time.process_time()
-		for glyph in range(5976): glyph_translate(glyph)
+		for glyph in range(5977): glyph_translate(glyph)
 		t = time.process_time() - t
 		for i, g in enumerate(_descr): # 测试是否为划分
 			u, v = glyph_translate(g.start)[2], glyph_translate(g.end-1)[2]

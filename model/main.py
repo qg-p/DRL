@@ -22,13 +22,14 @@ def select_action(
 		no_action_set = action_set_no(translate_messages_misc(state))
 
 		EPS_INCR = 2.
-		EPS_BASE = .1*0
+		EPS_BASE = 1+.1*0
 		EPS_DECAY = 100
 		from math import exp
 		epsilon = EPS_BASE + EPS_INCR * exp(-n_ep/EPS_DECAY)
 
 		import random
-		if False and random.random()<epsilon: # epsilon-greedy
+		if random.random()<epsilon: # epsilon-greedy
+			return ord('s'), actions_list[2].index(ord('s'))
 			if no_action_set == 1:
 				inv_letters_55 = [*state.inv_letters]
 				actions = [i for i in enumerate(inv_letters_55) if i[1]] # non-zero
@@ -46,7 +47,7 @@ def select_action(
 			else: # 其它情况；将位置映射到动作的 ord
 				actions = actions_list[no_action_set]
 			action = actions[action_index]
-			# print('Q sum\t%+.6f'%(Q[0].item()))
+		print('Q sum\t%+.6f'%((Q0.data + Q1.data)[action_index].item()))
 	return action, action_index
 
 def optimize_batch(
@@ -75,9 +76,9 @@ def optimize_batch(
 	p = torch.stack(p) # prediction
 	y = torch.tensor(y, device=p.device)
 	y = torch.tensor(r, device=p.device) + gamma * y
-	# print('predict\t%+.6f'%(p[0].item()))
-	# print('label\t%+.6f'%(y[0].item()))
-	# print('reward\t%+.6f'%(batch_reward[0]))
+	print('predict\t%+.6f'%(p[0].item()))
+	print('label\t%+.6f'%(y[0].item()))
+	print('reward\t%+.6f'%(batch_reward[0]))
 	# print(p); print(y)
 
 	loss:torch.Tensor = loss_func(p, y)
@@ -131,6 +132,8 @@ def train_n_batch(
 	gamma:float
 ): # ((None, None, None), (None, R1, S1), ..., (Ai, Ri, Si), (Aj, Rj, None), (None, Rk, Sk), ...)
 	from random import randint
+	model0.requires_grad_(False)
+	model1.requires_grad_(False)
 	for n_ep in range(start_epoch, start_epoch+num_epoch):
 		# print('epoch %-6d'%(n_ep))
 
@@ -143,7 +146,9 @@ def train_n_batch(
 			(optimizer0, model0, last_RNN_STATE0, ),
 			(optimizer1, model1, last_RNN_STATE1, ),
 		)[no]
-		[Q_train], _ = forward_batch(batch_state, [RNN_STATE], [model])
+		model.requires_grad_(True)
+		[Q_train], _ = forward_batch(batch_state, [RNN_STATE], [model]) # 旧 state
+		model.requires_grad_(False)
 
 		observations = env.step(batch_action) # 注意 batch_state 的元素均指向 env.frcv 的成员的内存，step 会改变 batch_state
 		batch_state = [i.obs if not i.done else None for i in observations] # 更新 None 状态
@@ -159,12 +164,12 @@ def train_n_batch(
 		)[no]
 		loss = optimize_batch(batch_action_index, batch_reward, loss_func, optimizer, Q_train, next_Q_train, next_Q_eval, gamma)
 		print('%10.4e | %s'%(loss, bytes(batch_action).replace(b'\xff', b'!').replace(b'\x1b', b'Q').replace(b'\x04', b'D').replace(b'\r', b'N').decode()))
-		from nle_win.batch_nle import EXEC
-		EXEC('env.render(0)')
+		# from nle_win.batch_nle import EXEC
+		# EXEC('env.render(0)')
 
 	return batch_state, Q0, Q1, RNN_STATE0, RNN_STATE1, last_RNN_STATE0, last_RNN_STATE1
 
-def __main__(*, nums_epoch:List[int], batch_size:int, gamma:float, use_gpu:bool, model0_file:str=None, model1_file:str=None, log_file:str=None):
+def __main__(*, nums_epoch:List[int], batch_size:int, gamma:float, use_gpu:bool, model0_file:str=None, model1_file:str=None, log_file:str=None, Learning_rate:float, penalty_step:float):
 	'''
 	隔 num_epoch 轮 optimize 更新一次 loss|score|env 记录和参数文件（缓存/日志？），以防宕机
 	main 函数执行完后保存参数为文件名带总 epoch 数、时间戳、模型和环境参数的新文件
@@ -174,13 +179,13 @@ def __main__(*, nums_epoch:List[int], batch_size:int, gamma:float, use_gpu:bool,
 	from misc import actions_ynq, actions_normal
 	model0:DRQN = torch.load(model0_file) if model0_file is not None else DRQN(device, len(actions_ynq), len(actions_normal))
 	model1:DRQN = torch.load(model1_file) if model1_file is not None else DRQN(device, len(actions_ynq), len(actions_normal))
-	optimizer0 = torch.optim.Adam(model0.parameters(), lr=0.01)
-	optimizer1 = torch.optim.Adam(model1.parameters(), lr=0.01)
+	optimizer0 = torch.optim.Adam(model0.parameters(), lr=Learning_rate)
+	optimizer1 = torch.optim.Adam(model1.parameters(), lr=Learning_rate)
 	loss_func = nn.SmoothL1Loss()
 
 	from nle_win.batch_nle.client import connect, disconnect, batch
 	connect()
-	env = batch(batch_size, 'character="Val-Hum-Fem-Law", savedir=None, penalty_step=-1/64')
+	env = batch(batch_size, 'character="Val-Hum-Fem-Law", savedir=None, penalty_step={}'.format(penalty_step))
 
 	batch_state:List[nle.basic.obs.observation] = [None]*batch_size
 	# batch_action_index:List[int]                = [None]*batch_size
@@ -215,15 +220,12 @@ def __main__(*, nums_epoch:List[int], batch_size:int, gamma:float, use_gpu:bool,
 	disconnect()
 	return model0, model1
 
-def pretrain():
-	raise Exception('TODO')
-
 if __name__ == '__main__':
+	from model import setting
 	batch_size = 1
 	num_epoch = 8
-	gamma = .995
 	use_gpu = False
 
-	torch.cuda.set_per_process_memory_fraction(1.)
+	if use_gpu: torch.cuda.set_per_process_memory_fraction(1.)
 	# torch.autograd.set_detect_anomaly(True) # DEBUG
-	models = __main__(nums_epoch=[num_epoch]*64, batch_size=batch_size, gamma=gamma, use_gpu=use_gpu)
+	models = __main__(nums_epoch=[num_epoch]*64, batch_size=batch_size, gamma=setting.gamma, use_gpu=use_gpu, Learning_rate=setting.lr, penalty_step=setting.penalty_step)

@@ -6,7 +6,10 @@ import nle_win as nle
 # 三个 actions 序列，重要的是长度和 actions_normal 的内容
 # 修改后需要到 exec_action 检查
 actions_ynq = [ord(ch) for ch in [
-	'\x1b', 'y', 'n', '*',
+	'\x1b', 'y', 'n',
+	'a', 'b', 'c', 'd', 'e', # chatbox
+	# 'r', 'l', # don't wear rings
+	'\r', # enter
 ]]
 
 actions_inv = [0, ord('$'), ord('#')]+[*range(ord('a'), ord('z')+1)]+[*range(ord('A'), ord('Z')+1)]
@@ -15,10 +18,11 @@ actions_normal = [ord(ch) for ch in [
 	'k', 'l', 'h','j', 'u', 'n', 'b', 'y', # compass actions
 	'<', '>', 's',
 #	'c', # close
+	'd', # drop
 	'\x04', # kick
 	',', # pick up
 	# 后面的行动后接一个 * 将 misc 由 [1, 0, 0] 转为 [0, 0, 1]。
-	'a', 'e', 'r', 'q', # apply, eat, read, quaff
+	'a', 'e', 'r', 'q', 'z', # apply, eat, read, quaff, zap
 	't', # throw
 	'W', 'A', # wear, take off
 	'w', # wield
@@ -27,7 +31,9 @@ actions_normal = [ord(ch) for ch in [
 actions_list = [actions_ynq, actions_inv, actions_normal]
 
 def action_set_no(misc_6:list):
-	if misc_6[3] and misc_6[4] and misc_6[5]:
+	if not (misc_6[0] or misc_6[1] or misc_6[2]):
+		return 2 # 信息残留在屏幕上，但此时实际上没有选项
+	elif misc_6[3] and misc_6[4] and misc_6[5]:
 		if misc_6[0]: return 0
 		else: return 2 # y/n question repeats. minor bug
 	elif misc_6[5] and not misc_6[3]: return 2

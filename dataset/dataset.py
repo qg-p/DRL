@@ -65,16 +65,17 @@ class ARS_dataset(dataset):
 		'''
 		file = open(filename, 'ab+')
 		if file.tell()==0 or not keep_exist_data:
-			WR=True # whether clear data
+			# WR=True # whether clear data
 			file = open(filename, 'wb+')
-		else:
-			file.seek(0, 0)
-		if WR:
 			metadata = metadata.__repr__()+'\n'
 			file.write(metadata.encode())
 			metadata = eval(metadata[:-1])
 		else:
-			metadata = eval(file.readline()[:-1].decode())
+			file.seek(0, 0)
+			metadata_new = eval(file.readline()[:-1].decode())
+			if metadata and metadata != metadata_new:
+				print('ignore: {}'.format(metadata))
+			metadata = metadata_new
 		self.metadata = metadata
 		super().__init__(file, ARS_Line)
 	def append_line(self, action:int, reward:float, obs:nle.basic.obs.observation):
@@ -83,6 +84,50 @@ class ARS_dataset(dataset):
 	from typing import List
 	def read(self, n_unit:int)->List[ARS_Line]:
 		return dataset.read(self, n_unit)
+	def readall(self)->List[ARS_Line]:
+		from ctypes import sizeof
+		return self.read((self.file_size-self.pos)//sizeof(self.UnitType))
+
+class ARS_dataset_xz():
+	def __init__(self, filename:str, metadata:str='', keep_exist_data:bool=True) -> None:
+		'''
+		filename: name of dataset.xz file (lzma)
+		metadata: comment to write in the head of file if keep_exist_data is False or it has no data
+		keep_exist_data: keep existing data. only read and append.
+		'''
+		from .xzfile import xz_file
+		self.file = xz_file(filename, RD_ONLY=keep_exist_data, WR_ONLY=not keep_exist_data)
+		import os
+		if os.path.isfile(filename) and keep_exist_data:
+			metadata_new = eval(self.file.readline().decode())
+			if metadata and metadata != metadata_new:
+				print('ignore: {}'.format(metadata))
+			metadata = metadata_new
+		else:
+			metadata = metadata.__repr__()+'\n'
+			self.file.append(metadata.encode())
+			metadata = eval(metadata)
+		self.metadata = metadata
+
+	from typing import List
+	def read(self, n_unit:int)->List[ARS_Line]:
+		if self.file.wrbuffer is not None:
+			return [] # writeonly
+		from ctypes import sizeof
+		size = sizeof(ARS_Line)
+		assert size*n_unit+self.file.pos<=self.file.file_size
+		buffer = self.file.read(size*n_unit)
+		base = (ARS_Line*n_unit).from_buffer_copy(buffer)
+		return [*base]
+	def readall(self):
+		from ctypes import sizeof
+		return self.read((self.file.file_size-self.file.pos)//sizeof(ARS_Line))
+	def append_line(self, action:int, reward:float, obs:nle.basic.obs.observation):
+		line = ARS_Line(action=action, reward=reward, state=obs)
+		self.append_lines([line])
+	def append_lines(self, lines:List[ARS_Line]):
+		for unit in lines:
+			self.file.append(bytes(unit))
 
 def __main__():
 	def test_rdwr():

@@ -45,7 +45,7 @@ class NLEnv():
 			end_status = self.env.StepStatus.ABORTED
 		else:
 			end_status = self.env._is_episode_end(observation)
-		end_status = self.env.StepStatus(self.done or end_status)
+		end_status = self.env.StepStatus(done or end_status)
 
 		self.reward = float(self.env._reward_fn(last_observation, None, observation, end_status)) # action is not used so it's safe
 
