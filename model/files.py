@@ -4,7 +4,7 @@
 # def save_temp_parameters(model:DRQN, tag:str, filename_dataset:str=None, path:str=None):
 # 	if path is None:
 # 		import os
-# 		path = os.path.normpath(os.path.dirname(__file__)+'/dat')
+# 		path = os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/dat')
 # 	if filename_dataset is None:
 # 		filename_dataset = 'None'
 # 	else:

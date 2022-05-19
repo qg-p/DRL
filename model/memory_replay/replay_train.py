@@ -1,12 +1,12 @@
 if __name__=='__main__':
 	import os, sys
-	sys.path.append(os.path.normpath(os.path.dirname(__file__)+'/../..'))
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/../..'))
 	del os, sys
 
 from model.memory_replay.files import format_time
 
 from model.DRQN import DRQN
-from model.main import torch, nle, translate_messages_misc, action_set_no, actions_list
+from model.train import torch, nle, translate_messages_misc, action_set_no, actions_list
 
 reverse_actions_list = [
 	{value:index for index, value in enumerate(actions)}
@@ -20,6 +20,7 @@ def index_of_action(state:nle.basic.obs.observation, action:int):
 		for a in state.inv_letters:
 			if a==action: break
 			index += 1
+		# else index = 56 (<CR>)
 	else:
 		index = reverse_actions_list[no][action]
 	return index
@@ -62,8 +63,8 @@ def replay_train(*,
 	assert try_to_create_file(filename_parameter0_out)
 	assert try_to_create_file(filename_parameter1_out)
 
-	model0 = DRQN(torch.device('cuda'))
-	model1 = DRQN(torch.device('cuda'))
+	model0 = DRQN(torch.device('cpu'))
+	model1 = DRQN(torch.device('cpu'))
 	if filename_parameter0_in is not None: model0.load(filename_parameter0_in)
 	if filename_parameter1_in is not None: model1.load(filename_parameter1_in)
 	# model0.requires_grad_(False)
@@ -128,8 +129,6 @@ def replay_train(*,
 				print('%6d | %10.4e %10.4e %10.4e'%(n_ep+1, max(losses_n), min(losses_n), sum(losses_n)/len(losses_n)))
 				losses += losses_n
 				losses_n = []
-			# from nle_win.batch_nle import EXEC
-			# EXEC('env.render(0)')
 
 		print('%6d | %10.4e %10.4e %10.4e'%(n_ep+1, max(losses_n), min(losses_n), sum(losses_n)/len(losses_n)))
 		losses += losses_n
@@ -202,12 +201,12 @@ if __name__ == '__main__':
 	import os
 	curtime = format_time() # 'test'
 	datdir = os.path.dirname(__file__)+'/dat/'
-	filename_dataset_xz = datdir + '1-Val-Hum-Fem-Law.ARS.dat.xz'
+	filename_dataset_xz = datdir + '2-Val-Hum-Fem-Law.ARS.dat.xz'
 	filename_parameter0_out = datdir + '[{}]model0.pt'.format(curtime)
 	filename_parameter1_out = datdir + '[{}]model1.pt'.format(curtime)
 	log_file_xz = datdir + '[{}]loss.log.xz'.format(curtime)
 	del os, curtime
-	LR_list = [0.01]*2+[0.5]*4+[0.1]*8+[0.01]*6
+	LR_list = [0.01]+[0.5]+[0.1]*2+[0.01]#[0.01]*2+[0.5]*4+[0.1]*8+[0.01]*6
 	n_episodes = len(LR_list)
 	replay_train(
 		filename_dataset_xz=filename_dataset_xz,

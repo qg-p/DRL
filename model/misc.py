@@ -1,6 +1,6 @@
 if __name__=='__main__':
 	import os, sys
-	sys.path.append(os.path.normpath(os.path.dirname(__file__)+'/..'))
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/..'))
 	del os, sys
 import nle_win as nle
 # 三个 actions 序列，重要的是长度和 actions_normal 的内容
@@ -12,7 +12,7 @@ actions_ynq = [ord(ch) for ch in [
 	'\r', # enter
 ]]
 
-actions_inv = [0, ord('$'), ord('#')]+[*range(ord('a'), ord('z')+1)]+[*range(ord('A'), ord('Z')+1)]
+actions_inv = [ord('$'), ord('#')]+[*range(ord('a'), ord('z')+1)]+[*range(ord('A'), ord('Z')+1)]+[0, ord('\r')]
 
 actions_normal = [ord(ch) for ch in [
 	'k', 'l', 'h','j', 'u', 'n', 'b', 'y', # compass actions

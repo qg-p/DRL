@@ -102,11 +102,11 @@ def logfilexz_save_int(filename:str, ints:List[int]):
 def logfilexz_load_int(log_file_xz:str):
 	from dataset.xzfile import xz_file
 	file = xz_file(log_file_xz, RD_ONLY=True)
-	from ctypes import c_double, sizeof
-	losses = file.read()
-	losses = (c_double*(len(losses)//sizeof(c_double))).from_buffer_copy(losses)
-	losses = [*losses]
-	return losses
+	from ctypes import c_int, sizeof
+	longs = file.read()
+	longs = (c_int*(len(longs)//sizeof(c_int))).from_buffer_copy(longs)
+	longs = [*longs]
+	return longs
 
 def format_time():
 	from time import strftime

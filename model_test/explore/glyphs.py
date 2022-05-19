@@ -178,7 +178,7 @@ _gt[glyph_type.trap]=_gt[glyph_type.liquid]=_gt[glyph_type.explosion]=_gt[glyph_
 
 if __name__ == '__main__':
 	import os, sys
-	p=os.path.normpath(os.path.dirname(__file__)+'/../..')
+	p=os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/../..')
 	sys.path.append(p)
 	del os, sys
 from nle_win.basic.core.obs.recv import observation as obs

@@ -1,6 +1,6 @@
 if __name__=='__main__':
 	import os, sys
-	sys.path.append(os.path.normpath(os.path.dirname(__file__)+'/..'))
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/..'))
 	del os, sys
 from model.misc import *
 from model.glyphs import translate_glyph, translate_glyphs, translate_inv, translate_messages_misc
@@ -175,32 +175,39 @@ class DRQN(nn.Module):
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, n_actions_ynq)
 				),
-				( # inventory
-					nn.Sequential( # 物品栏无序。这样可以消除输入的顺序性，生成每个物品的表示
-						nn.Linear(6, 16), nn.Sigmoid(), # 由于物品栏的变化通常不大，不使用 batchnorm
-						nn.Linear(16, 16), nn.ReLU(inplace=True),
-						nn.Linear(16, 8), nn.ReLU(inplace=True),
+				[ # inventory & enter
+					( # inventory
+						nn.Sequential( # 物品栏无序。这样可以消除输入的顺序性，生成每个物品的表示
+							nn.Linear(6, 16), nn.Sigmoid(), # 由于物品栏的变化通常不大，不使用 batchnorm
+							nn.Linear(16, 16), nn.ReLU(inplace=True),
+							nn.Linear(16, 8), nn.ReLU(inplace=True),
+							nn.Linear(8, 8), nn.ReLU(inplace=True),
+							nn.Linear(8, 8), nn.ReLU(inplace=True),
+						),
+						nn.Sequential( # 联系角色状态、周围和本层地图，生成当前状态下每个物品的表示
+							nn.Linear(64+8, 16), nn.Sigmoid(),
+							nn.Linear(16, 16), nn.ReLU(inplace=True),
+							nn.Linear(16, 16), nn.ReLU(inplace=True),
+							nn.Linear(16, 4), nn.ReLU(inplace=True),
+							nn.Linear(4, 4), nn.ReLU(inplace=True),
+							nn.Linear(4, 4), nn.ReLU(inplace=True),
+							nn.Linear(4, 1)
+						),
+						nn.Sequential( # 考虑多个物品间的联系。物品栏无序故不需检测连续介值的特征
+							nn.Linear(55, 55), nn.Softmax(-1),
+							nn.Linear(55, 55), nn.ReLU(inplace=True),
+							nn.Linear(55, 55), nn.ReLU(inplace=True),
+							nn.Linear(55, 55), nn.ReLU(inplace=True),
+							nn.Linear(55, 55), nn.ReLU(inplace=True),
+							nn.Linear(55, 55)
+						),
+					),
+					nn.Sequential(
+						nn.Linear(64, 8), nn.ReLU(inplace=True),
 						nn.Linear(8, 8), nn.ReLU(inplace=True),
-						nn.Linear(8, 8), nn.ReLU(inplace=True),
+						nn.Linear(8, 1)
 					),
-					nn.Sequential( # 联系角色状态、周围和本层地图，生成当前状态下每个物品的表示
-						nn.Linear(64+8, 16), nn.Sigmoid(),
-						nn.Linear(16, 16), nn.ReLU(inplace=True),
-						nn.Linear(16, 16), nn.ReLU(inplace=True),
-						nn.Linear(16, 4), nn.ReLU(inplace=True),
-						nn.Linear(4, 4), nn.ReLU(inplace=True),
-						nn.Linear(4, 4), nn.ReLU(inplace=True),
-						nn.Linear(4, 1)
-					),
-					nn.Sequential( # 考虑多个物品间的联系。物品栏无序故不需检测连续介值的特征
-						nn.Linear(55, 55), nn.Softmax(-1),
-						nn.Linear(55, 55), nn.ReLU(inplace=True),
-						nn.Linear(55, 55), nn.ReLU(inplace=True),
-						nn.Linear(55, 55), nn.ReLU(inplace=True),
-						nn.Linear(55, 55), nn.ReLU(inplace=True),
-						nn.Linear(55, 55)
-					),
-				),
+				],
 				nn.Sequential( # usual actions
 					nn.Linear(64, 16), nn.Sigmoid(),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
@@ -298,11 +305,14 @@ class DRQN(nn.Module):
 		return z
 	def _forward_inv_action(self, y_batch:torch.Tensor, inv_55_6_batch:torch.Tensor):
 		''' output: Q(obs)[len(actions_inv)] '''
-		z = self.Q[2][1][0](inv_55_6_batch)
-		tmp = torch.stack([y_batch]*z.shape[1], axis=1)
-		z = torch.cat([z, tmp], axis=2)
-		z = self.Q[2][1][1](z).squeeze(2) # batch size * 55
-		z:torch.Tensor = self.Q[2][1][2](z)
+		z = self.Q[2][1][0][0](inv_55_6_batch)
+		tmp = torch.stack([y_batch]*z.shape[1], axis=-2)
+		z = torch.cat([z, tmp], axis=-1)
+		z = self.Q[2][1][0][1](z)
+		z = z.squeeze(-1) # batch size * 55
+		z:torch.Tensor = self.Q[2][1][0][2](z)
+		tmp:torch.Tensor = self.Q[2][1][1](y_batch) # <CR>
+		z = torch.cat([z, tmp], axis=-1)
 		return z
 	def _forward_normal_action(self, y_batch:torch.Tensor):
 		''' output: Q(obs)[len(actions_normal)] '''
@@ -322,9 +332,9 @@ class DRQN(nn.Module):
 		if len(b): b, b_inv = (torch.stack(b), torch.stack(b_inv))
 		if len(c): c = torch.stack(c)
 
-		if len(a): a = self._forward_ynq_action(a) # no batchnorm
-		if len(b): b = self._forward_inv_action(b, b_inv) # has batchnorm
-		if len(c): c = self._forward_normal_action(c) # has batchnorm
+		if len(a): a = self._forward_ynq_action(a)
+		if len(b): b = self._forward_inv_action(b, b_inv)
+		if len(c): c = self._forward_normal_action(c)
 
 		y = [a, b, c]
 		j = [0, 0, 0]

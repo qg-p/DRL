@@ -157,7 +157,7 @@ _gt[glyph_type.room]=_gt[glyph_type.stair]=terrain_type.room
 _gt[glyph_type.door]=terrain_type.door
 _gt[glyph_type.trap]=_gt[glyph_type.liquid]=_gt[glyph_type.explosion]=_gt[glyph_type.zap_beam]=terrain_type.trap
 
-def _translate_glyph(glyph:int):
+def _translate_glyph(glyph:int): # 原有实现太低效了。CUDA 负载很低，但是 CPU 满载。
 	no = match_descr(glyph)
 	offset = glyph-_descr[no].start
 	g_type = _descr[no].type
@@ -172,26 +172,74 @@ def _get_glyph_array():
 		_glyph_array[i] = src
 	return _glyph_array
 _glyph_array = _get_glyph_array()
-def translate_glyph(glyph:int)->c_short*4: # 原有实现太低效了。CUDA 负载很低，但是 CPU 满载。
+def translate_glyph(glyph:int)->c_short*4:
 	return _glyph_array[glyph]
 
 if __name__ == '__main__':
 	import os, sys
-	p=os.path.normpath(os.path.dirname(__file__)+'/../..')
+	p=os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/../..')
 	sys.path.append(p)
 	del os, sys
+if __name__=='__main__':
+	import os, sys
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/..'))
+	del os, sys
 import nle_win as nle
+# def translate_glyphs(obs:nle.basic.obs.observation):
+# 	from ctypes import c_short
+# 	import numpy as np
+# 	glyphs_21_79 = obs.glyphs
+# 	glyphs = np.array(glyphs_21_79)
+# 	h, w = len(glyphs_21_79), len(glyphs_21_79[0])
+# 	a = np.array((c_short*w*h*4)()) # [4][21][79]
+# 	for row, row_a in zip(glyphs, zip(a[0], a[1], a[2], a[3])):
+# 		for i, glyph in enumerate(row):
+# 			row_a[0][i], row_a[1][i], row_a[2][i], row_a[3][i] = translate_glyph(glyph)
+# 	return a
+
 def translate_glyphs(obs:nle.basic.obs.observation):
-	from ctypes import c_uint8
-	import numpy as np
-	glyphs_21_79 = obs.glyphs
-	glyphs = np.array(glyphs_21_79)
-	h, w = len(glyphs_21_79), len(glyphs_21_79[0])
-	a = np.array((c_uint8*w*h*4)())
-	for row, row_a in zip(glyphs, zip(a[0], a[1], a[2], a[3])):
-		for i, glyph in enumerate(row):
-			row_a[0][i], row_a[1][i], row_a[2][i], row_a[3][i] = translate_glyph(glyph)
-	return a
+	from ctypes import c_short, c_void_p, cast
+	a = (c_short*79*21*4)()
+	translate_glyphs.func( # 进一步提速。~ 8s -> ~ 0.3s
+		cast(a, c_void_p),
+		cast(obs.glyphs, c_void_p),
+		cast(_glyph_array, c_void_p)
+	)
+	from numpy import array
+	return array(a)
+def _init_translate_glyphs_():
+	from ctypes import cdll
+	from os import path
+	dll = cdll.LoadLibrary(path.dirname(path.abspath(__file__))+'/lib/glyphs.dll')
+	translate_glyphs.func = dll.translate_glyphs
+_init_translate_glyphs_()
+
+# if __name__ == '__main__':
+# 	obs = nle.basic.obs.observation()
+# 	j=0
+# 	k=0
+# 	for i in _descr:
+# 		obs.glyphs[j][k] = i.start
+# 		k+=1
+# 		if k==79:
+# 			k=0
+# 			j+=1
+# 		obs.glyphs[j][k] = i.end-1
+# 		k+=1
+# 		if k==79:
+# 			k=0
+# 			j+=1
+# 	import numpy as np
+# 	a=translate_glyphs(obs)
+# 	b=_translate_glyphs(obs)
+# 	print((np.array(a)==np.array(b)).all())
+# 	from random import randint
+# 	for i in range(21):
+# 		for j in range(79):
+# 			obs.glyphs[i][j] = randint(0, _descr[len(_descr)-1].end-4)
+# 	a=translate_glyphs(obs)
+# 	b=_translate_glyphs(obs)
+# 	print((np.array(a)==np.array(b)).all())
 
 def translate_inv(obs:nle.basic.obs.observation):
 	inv_strs_55 = obs.inv_strs
@@ -210,17 +258,16 @@ def translate_inv(obs:nle.basic.obs.observation):
 		if len(strs):
 			s = strs.split(' ')
 			count = int(s[0]) if s[0] not in ['a', 'an', 'the'] else 1
-		else:
-			count = 0
-		try:
 			BUC = {
 				'uncursed': BUC_status.uncursed,
 				'cursed'  : BUC_status.cursed,
 				'unholy'  : BUC_status.cursed,
 				'blessed' : BUC_status.blessed,
 				'holy'    : BUC_status.blessed,
-			}[s[1]]
-		except KeyError:
+			}
+			BUC = BUC[s[1]] if len(s)>1 and s[1] in BUC.keys() else BUC_status.unknown
+		else:
+			count = 0
 			BUC = BUC_status.unknown
 
 		no = match_descr(glyph)
@@ -247,8 +294,9 @@ def translate_messages_misc(obs:nle.basic.obs.observation):
 	tty_message_take_off = b'take off' in tty_message
 	tty_message_pick_up  = b'Pick up what' in tty_message
 	tty_message_You_read = b'You read: "' in tty_message
+	tty_message_read_identify = b'What would you like to identify first' in tty_message
 	# 不对 Put in what? 反应
-	use_inv_tty_message = (tty_message_q_mark) and (not tty_message_You_read) and ((tty_message_take_off and not tty_message_type) and (not tty_message_pick_up))
+	use_inv_tty_message = (tty_message_q_mark) and (not tty_message_You_read) and ((tty_message_take_off and not tty_message_type) and (not tty_message_pick_up) or tty_message_read_identify)
 	translation = [
 		int(misc[0] or use_inv_tty_message), # whether an item is required
 		misc[1], # 0 or 1 # use enter to skip # message_has_more or misc[1]

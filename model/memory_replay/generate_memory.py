@@ -1,10 +1,10 @@
 if __name__=='__main__':
 	import os, sys
-	sys.path.append(os.path.normpath(os.path.dirname(__file__)+'/../..'))
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/../..'))
 	del os, sys
 # import nle_win as nle
 from nle_win.batch_nle.client import connect, disconnect, batch, EXEC
-from dataset.dataset import ARS_dataset
+from dataset.dataset import ARS_dataset, ARS_dataset_xz
 from getch import Getch
 from model.misc import actions_list, action_set_no as set_no
 from model.glyphs import translate_messages_misc as t
@@ -14,7 +14,7 @@ def main(filename:str):
 	connect()
 	env_param = 'character="Val-Hum-Fem-Law", savedir=None, penalty_step={}'.format(setting.penalty_step)
 	env = batch(1, env_param)
-	d = ARS_dataset(filename, env_param, False) # 支持边读边写
+	d = ARS_dataset_xz(filename, env_param, False) # xz不支持边读边写
 	action = 255
 	done = True
 	while True:
@@ -31,8 +31,8 @@ def main(filename:str):
 			last_no = no
 			no = set_no(t(state))
 			if no == 1:
-				actions = [c for c in state.inv_letters if c != 0]
-				if not len(actions): actions = [0]
+				actions = [c for c in state.inv_letters if c != 0]+[ord('\r')]
+				# if not len(actions): actions = [0]
 			else:
 				actions = actions_list[no]
 			# print (new) valid actions
@@ -72,5 +72,5 @@ def main(filename:str):
 
 if __name__ == '__main__':
 	import os
-	filename = os.path.dirname(__file__)+'/dat/0-Val-Hum-Fem-Law.ARS.dat'
+	filename = os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/dat/test-Val-Hum-Fem-Law.ARS.dat.xz')
 	main(filename)

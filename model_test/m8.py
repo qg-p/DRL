@@ -1,6 +1,6 @@
 if __name__=='__main__':
 	import os, sys
-	sys.path.append(os.path.normpath(os.path.dirname(__file__)+'/..'))
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/..'))
 	del os, sys
 '''
 在 m7 的基础上使用 DQN_RNN，即考虑中间状态。
