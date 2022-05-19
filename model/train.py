@@ -4,9 +4,9 @@ if __name__=='__main__':
 	del os, sys
 from model.DRQN import nle, torch, DRQN, action_set_no, translate_messages_misc, actions_list
 
-from typing import List, Tuple
+from typing import List, Tuple, Callable
 def select_action(
-	state:nle.basic.obs.observation, n_ep:int,
+	state:nle.basic.obs.observation, epsilon:float,
 	Q0:torch.Tensor, Q1:torch.Tensor
 ):
 	'''return action, action_index'''
@@ -15,12 +15,6 @@ def select_action(
 		action:int = 255 # reset env
 	else:
 		no_action_set = action_set_no(translate_messages_misc(state))
-
-		from math import exp
-		EPS_BASE = .05
-		EPS_INCR1, EPS_DECAY_INCR1 = 2.00,  500
-		EPS_INCR2, EPS_DECAY_INCR2 = 0.25, 5000
-		epsilon = EPS_INCR1 * exp(-n_ep/EPS_DECAY_INCR1) + EPS_INCR2 * exp(-n_ep/EPS_DECAY_INCR2) + EPS_BASE
 
 		import random
 		if random.random()<epsilon: # epsilon-greedy
@@ -126,7 +120,8 @@ def train_n_batch(
 	Q0:List[torch.Tensor], Q1:List[torch.Tensor],
 	RNN_STATE0:List[Tuple[torch.Tensor, torch.Tensor]], RNN_STATE1:List[Tuple[torch.Tensor, torch.Tensor]],
 	last_RNN_STATE0:List[Tuple[torch.Tensor, torch.Tensor]], last_RNN_STATE1:List[Tuple[torch.Tensor, torch.Tensor]],
-	gamma:float, penalty_invalid_action:float
+	gamma:float, penalty_still_T:float, penalty_invalid_action:float, penalty_death:float,
+	epsilon_function:Callable[[int, dict], float], epsilon_function_locals:dict,
 ): # ((None, None, None), (None, R1, S1), ..., (Ai, Ri, Si), (Aj, Rj, None), (None, Rk, Sk), ...)
 	from random import randint
 	losses = [0.]*0
@@ -135,7 +130,8 @@ def train_n_batch(
 	for n_ep in range(start_epoch, start_epoch+num_epoch):
 		# print('epoch %-6d'%(n_ep))
 
-		batch_action = [select_action(s, n_ep, q0, q1) for (s, q0, q1) in zip(batch_state, Q0, Q1)]
+		epsilon = epsilon_function(n_ep, epsilon_function_locals)
+		batch_action = [select_action(s, epsilon, q0, q1) for (s, q0, q1) in zip(batch_state, Q0, Q1)]
 		batch_action_index, batch_action = [i[1] for i in batch_action], [i[0] for i in batch_action]
 
 		# copy_state(last_batch_state, batch_state, last_batch_state_buffer) # 要在 step 前复制
@@ -152,10 +148,13 @@ def train_n_batch(
 
 		observations = env.step(batch_action) # 注意 batch_state 的元素均指向 env.frcv 的成员的内存，step 会改变 batch_state
 		batch_state = [obs.obs if not obs.done else None for obs in observations] # 更新 None 状态
-		batch_reward = [ # 如果 T 没有变化（例如放下不存在的物品），环境不发生改变，且饥饿度不增加
-			obs.reward + ( # 判断为行动不立即生效，给予略微的负激励，防止游戏状态陷入死循环导致收敛到奇怪的地方
-				0 if obs.obs is None or obs.obs.blstats[20]!=last_scores_record[0] else penalty_invalid_action
-			) for obs, last_scores_record in zip(observations, scores_record_last_batch_state)
+		batch_reward = [
+			obs.reward + penalty_death if obs.done # 游戏结束（基本上等于死亡），给予较大的负激励
+			else ( # 如果 T 没有变化（例如放下不存在的物品），环境不发生改变，且饥饿度不增加，判断为行动不立即生效，给予略微的负激励，防止游戏状态陷入死循环导致收敛到奇怪的地方
+				0 if obs.obs.blstats[20]!=last_scores_record[0] else penalty_still_T
+			) + ( # 如果行动非法（暂时只实现 0 输入（inv 选择 0）），给予较大的负激励
+				0 if action != 0 else penalty_invalid_action
+			) for obs, last_scores_record, action in zip(observations, scores_record_last_batch_state, batch_action)
 		]
 
 		[last_RNN_STATE0, last_RNN_STATE1] = [RNN_STATE0, RNN_STATE1]
@@ -168,13 +167,11 @@ def train_n_batch(
 		)[no]
 		loss = optimize_batch(batch_action_index, batch_reward, loss_func, optimizer, Q_train, next_Q_train, next_Q_eval, gamma)
 		# loss = 0.
-		print('%10.4e | %s'%(loss, bytes(batch_action).replace(b'\xff', b'!').replace(b'\x1b', b'Q').replace(b'\x04', b'D').replace(b'\r', b'N').replace(b'\x00', b'0').decode()))
+		print('%10.4e | %s'%(loss, bytes(batch_action).translate(bytes.maketrans(b'\xff\x1b\x04\r\x00', b'!QDN0')).decode()))
 
 		losses.append(loss)
 		for record, state in zip(scores_record_last_batch_state, batch_state):
 			if state is None: # 当前为终止状态，则上一状态的 blstats[20], blstats[9] 分别为 T, total score
 				scores += [n_ep, record[0], record[1]]
-		# from nle_win.batch_nle import EXEC
-		# EXEC('env.render(0)')
 
 	return batch_state, Q0, Q1, RNN_STATE0, RNN_STATE1, last_RNN_STATE0, last_RNN_STATE1, losses, scores

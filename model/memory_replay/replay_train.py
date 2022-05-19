@@ -98,6 +98,7 @@ def replay_train(*,
 		RNN_STATE1 = model1.initial_RNN_state()
 		last_RNN_STATE0 = None
 		last_RNN_STATE1 = None
+		last_T = 0
 		action_index = index_of_action(state, action)
 		losses_n = []
 		for n_ep in range(len(dataset)-1):
@@ -114,7 +115,14 @@ def replay_train(*,
 			line = dataset[n_ep]
 			reward, action = line.reward, line.action
 			action_index = index_of_action(state, action)
+			last_T = 0 if state is None else state.blstats[20]
 			state = line.state if dataset[n_ep+1].action != 255 else None # next state in actual
+			reward += setting.penalty_death if state is None else ( # 游戏结束
+			# 如果 T 没有变化（例如放下不存在的物品），环境不发生改变，且饥饿度不增加，判断为行动不立即生效，给予略微的负激励，防止游戏状态陷入死循环导致收敛到奇怪的地方
+				0 if state.blstats[20]!=last_T else setting.penalty_still_T
+			) + ( # 如果行动非法（暂时只实现 0 输入（inv 选择 0）），给予较大的负激励
+				0 if action != 0 else setting.penalty_invalid_action
+			)
 
 			last_RNN_STATE0, last_RNN_STATE1 = RNN_STATE0, RNN_STATE1
 			Q0, RNN_STATE0 = forward(state, RNN_STATE0, model0)
@@ -201,12 +209,13 @@ if __name__ == '__main__':
 	import os
 	curtime = format_time() # 'test'
 	datdir = os.path.dirname(__file__)+'/dat/'
-	filename_dataset_xz = datdir + '2-Val-Hum-Fem-Law.ARS.dat.xz'
-	filename_parameter0_out = datdir + '[{}]model0.pt'.format(curtime)
-	filename_parameter1_out = datdir + '[{}]model1.pt'.format(curtime)
+	filename_dataset_xz = datdir + '1-Val-Hum-Fem-Law.ARS.dat.xz'
+	filename_parameter0_out = datdir + '[{}]DRQN0.pt'.format(curtime)
+	filename_parameter1_out = datdir + '[{}]DRQN1.pt'.format(curtime)
 	log_file_xz = datdir + '[{}]loss.log.xz'.format(curtime)
 	del os, curtime
-	LR_list = [0.01]+[0.5]+[0.1]*2+[0.01]#[0.01]*2+[0.5]*4+[0.1]*8+[0.01]*6
+	# LR_list = [0.01]+[0.5]+[0.1]*2+[0.01]#[0.01]*2+[0.5]*4+[0.1]*8+[0.01]*6
+	LR_list = [0.1]*2
 	n_episodes = len(LR_list)
 	replay_train(
 		filename_dataset_xz=filename_dataset_xz,
@@ -216,4 +225,6 @@ if __name__ == '__main__':
 		n_episodes=n_episodes,
 		LR_list=LR_list, # [.05, .02, .01, .01],
 		gamma=setting.gamma,
+		filename_parameter0_in='D:\\words\\RL\\project\\nle_model\\model\\dat\\in\\[2022-0519-181720]DRQN0.pt',
+		filename_parameter1_in='D:\\words\\RL\\project\\nle_model\\model\\dat\\in\\[2022-0519-181720]DRQN1.pt',
 	)

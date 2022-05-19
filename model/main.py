@@ -13,7 +13,9 @@ import nle_win as nle
 
 def __main__(*,
 	nums_epoch:List[int], batch_size:int, use_gpu:bool,
-	gamma:float, env_param:str, penalty_invalid_action:float,
+	gamma:float, epsilon_func:str, epsilon_func_locals:dict,
+	env_param:str,
+	penalty_still_T:float, penalty_invalid_action:float, penalty_death:float,
 	logfile:str,
 	model0_file_out:str, model1_file_out:str,
 	model0_file_in:str=None, model1_file_in:str=None,
@@ -31,6 +33,10 @@ def __main__(*,
 	assert try_to_create_file(model0_file_out)
 	assert try_to_create_file(model1_file_out)
 	tmpfile = [None, None, None, None]
+
+	from typing import Callable
+	epsilon_lambda:Callable[[int, dict], float] = eval(epsilon_func)
+	assert isinstance(epsilon_lambda, Callable) and epsilon_lambda.__code__.co_argcount==2
 
 	losses = [0.]*0
 	scores = [0]*0
@@ -56,19 +62,14 @@ def __main__(*,
 	filelog = open(logfile, 'ab+')
 	filelog.writelines([(line+'\n').encode() for line in [
 		'{} time'.format(format_time()),
-
-		'epsilon:',
-		'\tEPS_BASE = .05'
-		'\tEPS_INCR1, EPS_DECAY_INCR1 = 2.00,  500'
-		'\tEPS_INCR2, EPS_DECAY_INCR2 = 0.25, 5000'
-		'\tepsilon = EPS_INCR1 * exp(-n_ep/EPS_DECAY_INCR1) + EPS_INCR2 * exp(-n_ep/EPS_DECAY_INCR2) + EPS_BASE'
-
 		'parameters:',
 		'\tnums_epoch={}'.format(nums_epoch),
 		'\tbatch_size={}'.format(batch_size),
 		'\tgamma={}'.format(gamma),
 		'\tenv_param={}'.format(env_param),
+		'\tpenalty_still_T={}'.format(penalty_still_T),
 		'\tpenalty_invalid_action={}'.format(penalty_invalid_action),
+		'\tpenalty_death={}'.format(penalty_death),
 		'\tuse_gpu={}'.format(use_gpu),
 		'\tlogfile={}'.format(logfile),
 		'\tmodel0_file_out={}'.format(model0_file_out),
@@ -78,6 +79,8 @@ def __main__(*,
 		'\tloss_logfile_xz={}'.format(loss_logfile_xz),
 		'\tscore_logfile_xz={}'.format(score_logfile_xz),
 		'\tLearning_rate={}'.format(Learning_rate),
+		'\tepsilon_func={}'.format(epsilon_func),
+		'\tepsilon_func_locals=\'\'\'{}\'\'\''.format(epsilon_func_locals),
 		'Start.'
 	]])
 	filelog.close()
@@ -108,7 +111,8 @@ def __main__(*,
 			batch_state, # reset all env, do not use input q
 			Q0, Q1, # Q[i] will not be visited if state[i] is None
 			RNN_STATE0, RNN_STATE1, last_RNN_STATE0, last_RNN_STATE1,
-			gamma, penalty_invalid_action
+			gamma, penalty_still_T, penalty_invalid_action, penalty_death,
+			epsilon_lambda, epsilon_func_locals
 		)
 		# batch_state[0] = None # 测试：重置状态，模拟一个 episode 结束。测试结果：True
 		# TODO: 合适的函数名
@@ -231,28 +235,100 @@ if __name__ == '__main__':
 	from model import setting
 	batch_size = 128
 	num_epoch = 512
+	nums_epoch = [num_epoch]*64
 	use_gpu = True
+	model_file_tag = 'DRQN'
 
 	if use_gpu: torch.cuda.set_per_process_memory_fraction(1.)
 	# torch.autograd.set_detect_anomaly(True) # DEBUG
 
+	epsilon_func='''
+lambda n_ep, locals: [( # function
+	lambda EPS_BASE, EPS_INCR_DECAY_LIST, n_ep, exp: [
+		EPS_BASE + sum([
+			EPS_INCR_DECAY[0] * exp(-n_ep/EPS_INCR_DECAY[1])
+			for EPS_INCR_DECAY in EPS_INCR_DECAY_LIST
+		])
+	][0])( # constants
+		0*.05, ( # .05
+			(0*2, 500),
+			(0*0.25, 5000),
+		),
+		n_ep, locals['exp'],
+	), # function 1
+	locals['RENDER'](
+		n_ep, locals['get_hour'](locals['strftime']), locals['EXEC'],
+	), # function 2
+][0]
+'''
+	from math import exp
+	from nle_win.batch_nle import EXEC
+	from time import strftime
+	print(EXEC)
+	epsilon_func_locals = {
+		'exp':exp,
+		'strftime':strftime,
+		'EXEC':EXEC,
+		'RENDER':(lambda n_ep, hour, EXEC: [
+			None if not ((hour>9 or hour<3) and n_ep) else
+			EXEC('env.render({})'.format((n_ep//10) % (batch_size))),
+			# print(EXEC),
+		][0]),
+		'get_hour': (lambda strftime: [
+			int(strftime('%H'))
+		][0]),
+	}
+	del exp, EXEC, strftime
+	# print(eval(epsilon_func)(50000, epsilon_func_locals))
+	# exit()
+
+	model0_file_in = None
+	model1_file_in = None
+
+	import os
+	try:
+		datdir = os.path.dirname(os.path.abspath(__file__))+'/dat'
+	except:
+		datdir = os.getcwd()+'/dat'
+	datdir = os.path.normpath(datdir) + '\\' # datdir 为当前目录的 /dat/
+
+	if os.path.isdir(datdir+'in'): # 最新（时间最大）的参数文件作为输入
+		file_in_time = [ # dat/in 里每个 pt 文件的时间
+			[
+				(i, int(i.replace('-', '').strip('[]')))
+				for i in i.split(model_file_tag) if '.pt' not in i
+			][0] for i in os.listdir(datdir+'in\\') if model_file_tag in i
+		] # [('[2022-0518-0010], 202205180010'), ...]
+		file_in_time_max = [i[1] for i in file_in_time]
+		file_in_time_max = file_in_time_max.index(max(file_in_time_max))
+		file_in_time = file_in_time[file_in_time_max][0]
+
+		model0_file_in = datdir+'in\\'+file_in_time+model_file_tag+'0.pt'
+		model1_file_in = datdir+'in\\'+file_in_time+model_file_tag+'1.pt'
+		del file_in_time_max, file_in_time
+	del os
+	print('model0_file_in = {}'.format(model0_file_in))
+	print('model1_file_in = {}'.format(model1_file_in))
+
 	from model.memory_replay.files import format_time
 	curtime = format_time()
-	model0_file_out = 'model\dat\[{}]DRQN0.pt'.format(curtime)
-	model1_file_out = 'model\dat\[{}]DRQN1.pt'.format(curtime)
-	loss_logfile_xz = 'model\dat\[{}]loss.xz'.format(curtime)
-	score_logfile_xz = 'model\dat\[{}]score.xz'.format(curtime)
-	logfile = 'model\dat\[{}]main.log'.format(curtime)
+	model0_file_out = 'model\\dat\\[{}]{}0.pt'.format(curtime, model_file_tag)
+	model1_file_out = 'model\\dat\\[{}]{}1.pt'.format(curtime, model_file_tag)
+	loss_logfile_xz = 'model\\dat\\[{}]loss.xz'.format(curtime)
+	score_logfile_xz = 'model\\dat\\[{}]score.xz'.format(curtime)
+	logfile = 'model\\dat\\[{}]main.log'.format(curtime)
 	del curtime, format_time
 
 	models = __main__(
-		nums_epoch=[num_epoch]*128, batch_size=batch_size,
-		gamma=setting.gamma, env_param='character="Val-Hum-Fem-Law", savedir=None, penalty_step=0',
-		penalty_invalid_action = setting.penalty_step,
+		nums_epoch=nums_epoch, batch_size=batch_size,
+		gamma=setting.gamma, env_param='character="{}", savedir=None'.format(setting.character),
+		penalty_still_T=setting.penalty_still_T,
+		penalty_invalid_action=setting.penalty_invalid_action,
+		penalty_death=setting.penalty_death,
 		logfile=logfile,
 		use_gpu=use_gpu, Learning_rate=setting.lr,
 		model0_file_out=model0_file_out, model1_file_out=model1_file_out,
 		loss_logfile_xz=loss_logfile_xz, score_logfile_xz=score_logfile_xz,
-		model0_file_in='D:\\words\\RL\\project\\nle_model\\model\\dat\\DRQN0.pt',
-		model1_file_in='D:\\words\\RL\\project\\nle_model\\model\\dat\\DRQN1.pt',
+		model0_file_in=model0_file_in, model1_file_in=model1_file_in,
+		epsilon_func=epsilon_func, epsilon_func_locals=epsilon_func_locals
 	)

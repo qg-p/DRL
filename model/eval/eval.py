@@ -4,7 +4,7 @@ if __name__=='__main__':
 	del os, sys
 
 from model.DRQN import DRQN, torch
-from model.main import forward_batch
+from model.train import forward_batch
 from nle_win.batch_nle import batch
 import nle_win as nle
 
@@ -56,7 +56,7 @@ def test(
 
 		[Q0, Q1], [RNN_STATE0, RNN_STATE1] = forward_batch(batch_state, [RNN_STATE0, RNN_STATE1], [model0, model1]) # 累积 RNN STATE
 		# loss = 0.
-		print('Action: %s'%(bytes(batch_action).replace(b'\xff', b'!').replace(b'\x1b', b'Q').replace(b'\x04', b'D').replace(b'\r', b'N').decode()))
+		print('Action: %s'%(bytes(batch_action).replace(b'\xff', b'!').replace(b'\x1b', b'Q').replace(b'\x04', b'D').replace(b'\r', b'N').replace(b'\x00', b'0').decode()))
 		print('Reward: {}'.format(['%5.2f'%(reward) for reward in batch_reward]))
 
 		# losses.append(loss)
@@ -117,14 +117,14 @@ def __main__(
 
 if __name__ == '__main__':
 	use_gpu = False
-	model0_parameter_file = 'D:\\words\\RL\\project\\nle_model\\model\\memory_replay\\dat\\[2022-0518-153045]model0.pt'
-	model1_parameter_file = 'D:\\words\\RL\\project\\nle_model\\model\\memory_replay\\dat\\[2022-0518-153045]model1.pt'
-	from model import setting
+	model0_parameter_file = 'D:\\words\\RL\\project\\nle_model\\model\\dat\\[2022-0519-012344]DRQN0.pt'
+	model1_parameter_file = 'D:\\words\\RL\\project\\nle_model\\model\\dat\\[2022-0519-012344]DRQN1.pt'
+#	from model import setting
 	__main__(
 		model0_parameter_file=model0_parameter_file,
 		model1_parameter_file=model1_parameter_file,
 		use_gpu=use_gpu,
 		batch_size=1,
-		env_param='character="Val-Hum-Fem-Law", savedir=None, penalty_step={}'.format(setting.penalty_step),
+		env_param='character="Val-Hum-Fem-Law", savedir=None',
 		nums_epoch=[256]*4,
 	)
