@@ -168,7 +168,7 @@ def replay_train(*,
 			tmpfile[1] = tmpfile_new[1]
 			model1.save(tmpfile[1])
 		except: pass
-		try:
+		try:# '>' -> 's'
 			assert iter_tmpfile(tmpfile_new[2], tmpfile[2], force_write=False, do_not_cover=True)
 			tmpfile[2] = tmpfile_new[2]
 			logfilexz_save_float(tmpfile[2], losses)

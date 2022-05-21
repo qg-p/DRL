@@ -6,7 +6,7 @@ from model.DRQN import nle, torch, DRQN, action_set_no, translate_messages_misc,
 
 from typing import List, Tuple, Callable
 def select_action(
-	state:nle.basic.obs.observation, epsilon:float,
+	state:nle.basic.obs.observation, random_action:bool,
 	Q0:torch.Tensor, Q1:torch.Tensor
 ):
 	'''return action, action_index'''
@@ -17,7 +17,7 @@ def select_action(
 		no_action_set = action_set_no(translate_messages_misc(state))
 
 		import random
-		if random.random()<epsilon: # epsilon-greedy
+		if random_action: # epsilon-greedy
 			if no_action_set == 1:
 				inv_letters_56 = [*state.inv_letters]+[ord('\r')]
 				actions = [i for i in enumerate(inv_letters_56) if i[1]] # non-zero
@@ -121,17 +121,30 @@ def train_n_batch(
 	RNN_STATE0:List[Tuple[torch.Tensor, torch.Tensor]], RNN_STATE1:List[Tuple[torch.Tensor, torch.Tensor]],
 	last_RNN_STATE0:List[Tuple[torch.Tensor, torch.Tensor]], last_RNN_STATE1:List[Tuple[torch.Tensor, torch.Tensor]],
 	gamma:float, penalty_still_T:float, penalty_invalid_action:float, penalty_death:float,
-	epsilon_function:Callable[[int, dict], float], epsilon_function_locals:dict,
+	epsilon_function:Callable[[dict, dict], bool], epsilon_function_globals:dict,
 ): # ((None, None, None), (None, R1, S1), ..., (Ai, Ri, Si), (Aj, Rj, None), (None, Rk, Sk), ...)
 	from random import randint
 	losses = [0.]*0
 	scores = [0]*0
 	# from model.dry_forward import dry_forward_batch
+
+	# def epsilon_greedy(n_ep:int):
+	# 	from math import exp
+	# 	from random import random
+	# 	return random() < 0.05 + sum([
+	# 		EPS_INCR_DECAY[0] * exp(-n_ep/EPS_INCR_DECAY[1])
+	# 		for EPS_INCR_DECAY in (((2, 500), (0.25, 5000),))
+	# 	])
 	for n_ep in range(start_epoch, start_epoch+num_epoch):
 		# print('epoch %-6d'%(n_ep))
 
-		epsilon = epsilon_function(n_ep, epsilon_function_locals)
-		batch_action = [select_action(s, epsilon, q0, q1) for (s, q0, q1) in zip(batch_state, Q0, Q1)]
+		# batch_action = [
+		# 	select_action(s, epsilon_function({'n_ep':n_ep, 'game_no':game_no}, epsilon_function_globals), q0, q1)
+		# 	for game_no, (s, q0, q1) in enumerate(zip(batch_state, Q0, Q1))
+		# ]
+		# random_action = [False] + [epsilon_greedy(n_ep) for _ in range(1, env.frcv.batch_size)]
+		random_action = [epsilon_function({'n_ep': n_ep, 'game_no':game_no}, epsilon_function_globals) for game_no in range(env.frcv.batch_size)]
+		batch_action = [select_action(s, random_action, q0, q1) for (s, random_action, q0, q1) in zip(batch_state, random_action, Q0, Q1)]
 		batch_action_index, batch_action = [i[1] for i in batch_action], [i[0] for i in batch_action]
 
 		# copy_state(last_batch_state, batch_state, last_batch_state_buffer) # 要在 step 前复制

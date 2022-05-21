@@ -13,7 +13,7 @@ import nle_win as nle
 
 def __main__(*,
 	nums_epoch:List[int], batch_size:int, use_gpu:bool,
-	gamma:float, epsilon_func:str, epsilon_func_locals:dict,
+	gamma:float, epsilon_func:str, epsilon_func_globals:dict,
 	env_param:str,
 	penalty_still_T:float, penalty_invalid_action:float, penalty_death:float,
 	logfile:str,
@@ -27,7 +27,7 @@ def __main__(*,
 	保存带总 epoch 数、时间戳、模型和环境参数的日志文件。
 	'''
 	from model.memory_replay.files import try_to_create_file, logfilexz_save_float, iter_tmpfile, format_time, logfilexz_load_float, logfilexz_save_int
-	assert try_to_create_file(logfile)
+	assert try_to_create_file(logfile) and try_to_create_file(logfile+'.xz')
 	if loss_logfile_xz is not None: assert try_to_create_file(loss_logfile_xz) # 格式：double (raw)
 	if score_logfile_xz is not None: assert try_to_create_file(score_logfile_xz) # 格式：int, int, int (raw)，#_epoch, blstats_T, blstats_score
 	assert try_to_create_file(model0_file_out)
@@ -35,7 +35,7 @@ def __main__(*,
 	tmpfile = [None, None, None, None]
 
 	from typing import Callable
-	epsilon_lambda:Callable[[int, dict], float] = eval(epsilon_func)
+	epsilon_lambda:Callable[[dict, dict], bool] = eval(epsilon_func)
 	assert isinstance(epsilon_lambda, Callable) and epsilon_lambda.__code__.co_argcount==2
 
 	losses = [0.]*0
@@ -79,8 +79,8 @@ def __main__(*,
 		'\tloss_logfile_xz={}'.format(loss_logfile_xz),
 		'\tscore_logfile_xz={}'.format(score_logfile_xz),
 		'\tLearning_rate={}'.format(Learning_rate),
-		'\tepsilon_func={}'.format(epsilon_func),
-		'\tepsilon_func_locals=\'\'\'{}\'\'\''.format(epsilon_func_locals),
+		'\tepsilon_func=\'\'\'{}\'\'\''.format(epsilon_func),
+		'\tepsilon_func_globals={}'.format(epsilon_func_globals),
 		'Start.'
 	]])
 	filelog.close()
@@ -112,8 +112,11 @@ def __main__(*,
 			Q0, Q1, # Q[i] will not be visited if state[i] is None
 			RNN_STATE0, RNN_STATE1, last_RNN_STATE0, last_RNN_STATE1,
 			gamma, penalty_still_T, penalty_invalid_action, penalty_death,
-			epsilon_lambda, epsilon_func_locals
+			epsilon_lambda, epsilon_func_globals
 		)
+		from nle_win.batch_nle import EXEC
+		try: EXEC('env.render(0)')
+		except: pass
 		# batch_state[0] = None # 测试：重置状态，模拟一个 episode 结束。测试结果：True
 		# TODO: 合适的函数名
 		start_epoch += num_epoch
@@ -210,6 +213,14 @@ def __main__(*,
 		except: filelog.write(('Error: Fail to Write score logfile "{}". Last log file: {}. (score log)\n'.format(score_logfile_xz, tmpfile[3])).encode())
 	else: filelog.write(b'No score log. (score log)\n')
 	filelog.close()
+	# compress logfile
+	filelog = open(logfile, 'rb')
+	filelog = filelog.read() + '{} saved successfully. (main log)'.format(logfile+'.xz').encode()
+	iter_tmpfile(logfile+'.xz', logfile, force_write=True)
+	from dataset.xzfile import xz_file
+	logfilexz = xz_file(logfile+'.xz', WR_ONLY=True)
+	logfilexz.append(filelog)
+	logfilexz.close()
 
 	if loss_logfile_xz is not None: # 验证是否能加载
 		losses = logfilexz_load_float(loss_logfile_xz)
@@ -218,68 +229,95 @@ def __main__(*,
 	from matplotlib import pyplot as plt
 	plt.figure()
 	plt.title('Epoch - loss')
-	plt.plot(losses, marker='.', markersize=1, linewidth=0)
+	plt.plot(losses, marker='.', markersize=2, linewidth=0)
+
 	if len(scores):
-		plt.figure()
-		plt.title('Epoch - time span, total score of each terminated Episode')
 		scores_x = [scores[i*3+0] for i in range(len(scores)//3)]
 		scores_T = [scores[i*3+1] for i in range(len(scores)//3)]
 		scores_s = [scores[i*3+2] for i in range(len(scores)//3)]
-		plt.plot(scores_x, scores_T)
-		plt.plot(scores_x, scores_s)
+
+		_, ax1 = plt.subplots()
+		plt.title('Epoch - time, score')
+		ax2 = ax1.twinx()
+		lines = ax1.plot(scores_x, scores_T, label='T', c='C0') + ax2.plot(scores_x, scores_s, label='S', c='C1')
+		plt.legend(lines, [l.get_label() for l in lines])
+
+		plt.figure()
+		plt.title('time - score')
+		plt.plot(scores_T, scores_s, marker='.', markersize=4, linewidth=0)
 	plt.show()
 	# del filelog
 	return model0, model1
 
+def lambda_assign(DICT:dict, key, value):
+	DICT[key]=value
+
 if __name__ == '__main__':
 	from model import setting
 	batch_size = 128
-	num_epoch = 512
-	nums_epoch = [num_epoch]*64
+	num_epoch = 128
+	nums_epoch = [num_epoch]*256
 	use_gpu = True
 	model_file_tag = 'DRQN'
 
-	if use_gpu: torch.cuda.set_per_process_memory_fraction(1.)
+	if use_gpu: torch.cuda.set_per_process_memory_fraction(1-1/16.)
 	# torch.autograd.set_detect_anomaly(True) # DEBUG
 
 	epsilon_func='''
-lambda n_ep, locals: [( # function
-	lambda EPS_BASE, EPS_INCR_DECAY_LIST, n_ep, exp: [
-		EPS_BASE + sum([
-			EPS_INCR_DECAY[0] * exp(-n_ep/EPS_INCR_DECAY[1])
-			for EPS_INCR_DECAY in EPS_INCR_DECAY_LIST
-		])
-	][0])( # constants
-		0*.05, ( # .05
-			(0*2, 500),
-			(0*0.25, 5000),
-		),
-		n_ep, locals['exp'],
-	), # function 1
-	locals['RENDER'](
-		n_ep, locals['get_hour'](locals['strftime']), locals['EXEC'],
-	), # function 2
-][0]
-'''
+lambda LOCAL, GLOBAL: [
+# 是否是 game#0
+	lambda_assign(LOCAL, 0, LOCAL['game_no']==0),
+# epsilon-greedy 函数
+	lambda_assign(LOCAL, 1, ( # ε-greedy
+		lambda EPS_BASE, EPS_INCR_DECAY_LIST, n_ep, exp, random: [
+			random() < EPS_BASE + sum([
+				EPS_INCR_DECAY[0] * exp(-n_ep/EPS_INCR_DECAY[1])
+				for EPS_INCR_DECAY in EPS_INCR_DECAY_LIST
+			])
+		][0]
+	)),
+# 返回值，game#0 不随机，其余 ε-greedy
+	lambda_assign(LOCAL, 0, ( # retv
+		False if LOCAL[0]
+		else LOCAL[1](
+			GLOBAL[0]['EPS_BASE'], GLOBAL[0]['EPS_INCR_DECAY_LIST'], LOCAL['n_ep'],
+			GLOBAL['math.exp'], GLOBAL['random.random'],
+		)
+	)),
+	# print('1' if LOCAL['.0'] else '0', end=''),
+# # 渲染决策时的 game#0
+# 	GLOBAL['nle_win.batch_nle.EXEC']('env.render(0)') if LOCAL[0] and LOCAL['n_ep'] else None,
+# return retv
+	LOCAL[0],
+][-1]
+''' # LOCAL: 形式参数、变量
+# GLOBAL['RENDER'](
+# 	kwargs['n_ep'], GLOBAL['get_hour'](GLOBAL['time.strftime']), GLOBAL['nle_win.batch_nle.EXEC'],
+# ), # function 2
 	from math import exp
-	from nle_win.batch_nle import EXEC
+	from random import random
 	from time import strftime
-	print(EXEC)
-	epsilon_func_locals = {
-		'exp':exp,
-		'strftime':strftime,
-		'EXEC':EXEC,
-		'RENDER':(lambda n_ep, hour, EXEC: [
-			None if not ((hour>9 or hour<3) and n_ep) else
-			EXEC('env.render({})'.format((n_ep//10) % (batch_size))),
-			# print(EXEC),
-		][0]),
-		'get_hour': (lambda strftime: [
-			int(strftime('%H'))
-		][0]),
+	from nle_win.batch_nle import EXEC
+	epsilon_func_globals = {
+		'math.exp':exp,
+		'random.random':random,
+		'time.strftime':strftime,
+		'nle_win.batch_nle.EXEC':EXEC,
+		0:{ # const_variables
+			'EPS_BASE':.05,
+			'EPS_INCR_DECAY_LIST':[(2, 500), (0.25, 5000),]
+		},
+		# 'RENDER':(lambda n_ep, hour, EXEC: [
+		# 	None if not ((hour>9 or hour<3) and n_ep) else
+		# 	EXEC('env.render(0)'),
+		# 	# print(EXEC),
+		# ][0]),
+		# 'get_hour': (lambda strftime: [
+		# 	int(strftime('%H'))
+		# ][0]),
 	}
-	del exp, EXEC, strftime
-	# print(eval(epsilon_func)(50000, epsilon_func_locals))
+	del exp, EXEC, strftime, random
+	# print(eval(epsilon_func)(50000, epsilon_func_globals))
 	# exit()
 
 	model0_file_in = None
@@ -312,11 +350,11 @@ lambda n_ep, locals: [( # function
 
 	from model.memory_replay.files import format_time
 	curtime = format_time()
-	model0_file_out = 'model\\dat\\[{}]{}0.pt'.format(curtime, model_file_tag)
-	model1_file_out = 'model\\dat\\[{}]{}1.pt'.format(curtime, model_file_tag)
-	loss_logfile_xz = 'model\\dat\\[{}]loss.xz'.format(curtime)
-	score_logfile_xz = 'model\\dat\\[{}]score.xz'.format(curtime)
-	logfile = 'model\\dat\\[{}]main.log'.format(curtime)
+	model0_file_out = datdir+'[{}]{}0.pt'.format(curtime, model_file_tag)
+	model1_file_out = datdir+'[{}]{}1.pt'.format(curtime, model_file_tag)
+	loss_logfile_xz = datdir+'[{}]loss.xz'.format(curtime)
+	score_logfile_xz = datdir+'[{}]score.xz'.format(curtime)
+	logfile = datdir+'[{}]main.log'.format(curtime)
 	del curtime, format_time
 
 	models = __main__(
@@ -330,5 +368,5 @@ lambda n_ep, locals: [( # function
 		model0_file_out=model0_file_out, model1_file_out=model1_file_out,
 		loss_logfile_xz=loss_logfile_xz, score_logfile_xz=score_logfile_xz,
 		model0_file_in=model0_file_in, model1_file_in=model1_file_in,
-		epsilon_func=epsilon_func, epsilon_func_locals=epsilon_func_locals
+		epsilon_func=epsilon_func, epsilon_func_globals=epsilon_func_globals
 	)
