@@ -3,7 +3,7 @@ if __name__=='__main__':
 	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/../..'))
 	del os, sys
 
-from model.memory_replay.files import format_time
+from model.memory_replay.dataset.files import format_time
 
 from model.DRQN import DRQN
 from model.train import torch, nle, translate_messages_misc, action_set_no, actions_list
@@ -49,7 +49,7 @@ def forward(state:nle.basic.obs.observation, RNN_STATE:torch.Tensor, model:DRQN)
 	([RETURN_Q], [RETURN_RNN_STATE]) = ([None], [model.initial_RNN_state()]) if state is None else model.forward([state], [RNN_STATE])
 	return RETURN_Q, RETURN_RNN_STATE
 
-from model.memory_replay.files import try_to_create_file, iter_tmpfile, logfilexz_save_float, logfilexz_load_float
+from model.memory_replay.dataset.files import try_to_create_file, iter_tmpfile, logfilexz_save_float, logfilexz_load_float
 def replay_train(*,
 	filename_dataset_xz:str,
 	filename_parameter0_out:str, filename_parameter1_out:str,
