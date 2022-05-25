@@ -151,7 +151,7 @@ class DRQN(nn.Module):
 			(
 				[ # seq, process map 4(channels) * 21 * 79
 					nn.Sequential(
-						nn.Conv2d(4, 64, 1), nn.Sigmoid(), # all grids are considered same
+						nn.Conv2d(4, 64, 1), nn.Tanh(), # all grids are considered same
 						(Conv(64, 64, 1, nn.ReLU(inplace=True), 1) | Conv(64, 64, 1, nn.ReLU(inplace=True), 16)).init(),
 						(Conv(64, 64, 1, nn.ReLU(inplace=True), 1) | Conv(64, 64, 1, nn.ReLU(inplace=True), 16)).init(),
 						(Conv(64, 64, 1, nn.ReLU(inplace=True), 1) | Conv(64, 16, 1, nn.ReLU(inplace=True), 16)).init(),
@@ -175,9 +175,9 @@ class DRQN(nn.Module):
 				], # output: 1 * 21 * 79 ## output: 1 * 2 * 8
 				[
 					nn.Sequential( # process map 5 * 5
-						nn.Conv2d(4, 8, 3, padding=1), nn.Sigmoid(),
+						nn.Conv2d(4, 8, 3, padding=1), nn.Tanh(),
 						(Conv(8, 8, 3, nn.ReLU(inplace=True), 1) | Conv(8, 8, 3, nn.ReLU(inplace=True), 1)).init(),
-						nn.Conv2d(8, 1, 3, padding=1), nn.Sigmoid(),
+						nn.Conv2d(8, 1, 3, padding=1), nn.Tanh(),
 						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
 						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
 						(Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1) | Conv(1, 1, 3, nn.ReLU(inplace=True), 1)).init(),
@@ -194,7 +194,7 @@ class DRQN(nn.Module):
 					)
 				],
 				nn.Sequential( # BLSTATS MLP
-					nn.Linear(26, 26), nn.Sigmoid(), # abs. no bn.
+					nn.Linear(26, 26), nn.Tanh(), # abs. no bn.
 					nn.Linear(26, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
@@ -213,7 +213,7 @@ class DRQN(nn.Module):
 				),
 				# [
 				# 	RNN(nn.Sequential(
-				# 		nn.Linear(128, 128), nn.Sigmoid(),
+				# 		nn.Linear(128, 128), nn.Tanh(),
 				# 		nn.Linear(128, 64), nn.ReLU(inplace=True),
 				# 		nn.Linear(64, 64), nn.ReLU(inplace=True),
 				# 		nn.Linear(64, 64), nn.ReLU(inplace=True),
@@ -241,14 +241,14 @@ class DRQN(nn.Module):
 				[ # inventory & enter
 					( # inventory
 						nn.Sequential( # 物品栏无序。这样可以消除输入的顺序性，生成每个物品的表示
-							nn.Linear(6, 16), nn.Sigmoid(), # 由于物品栏的变化通常不大，不使用 batchnorm
+							nn.Linear(6, 16), nn.Tanh(), # 由于物品栏的变化通常不大，不使用 batchnorm
 							nn.Linear(16, 16), nn.ReLU(inplace=True),
 							nn.Linear(16, 8), nn.ReLU(inplace=True),
 							nn.Linear(8, 8), nn.ReLU(inplace=True),
 							nn.Linear(8, 8), nn.ReLU(inplace=True),
 						),
 						nn.Sequential( # 联系角色状态、周围和本层地图，生成当前状态下每个物品的表示
-							nn.Linear(64+8, 16), nn.Sigmoid(),
+							nn.Linear(64+8, 16), nn.Tanh(),
 							nn.Linear(16, 16), nn.ReLU(inplace=True),
 							nn.Linear(16, 16), nn.ReLU(inplace=True),
 							nn.Linear(16, 4), nn.ReLU(inplace=True),
@@ -272,7 +272,7 @@ class DRQN(nn.Module):
 					),
 				],
 				nn.Sequential( # usual actions
-					nn.Linear(64, 16), nn.Sigmoid(),
+					nn.Linear(64, 16), nn.Tanh(),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
 					nn.Linear(16, 16), nn.ReLU(inplace=True),
