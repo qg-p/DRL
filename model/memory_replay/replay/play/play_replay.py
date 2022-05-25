@@ -1,32 +1,191 @@
 if __name__=='__main__':
 	import os, sys
-	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/../../..'))
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/../../../..'))
 	del os, sys
 # 源于 model_test.m8.py
 # baseline 模型
 from model.DRQN import DRQN
 from model.SAR_dataset import SAR_dataset
 from model.memory_replay.dataset.files import format_time, logfilexz_load_int
-from model.memory_replay.replay.train import train_n_batch
 from model.memory_replay.replay.replay_memory import replay_memory_WHLR
 from typing import List, Tuple
 import torch
 import nle_win as nle
+from model.DRQN import nle, torch, DRQN, action_set_no, translate_messages_misc, actions_list
+
+from typing import List, Tuple, Callable
+def select_action(
+	state:nle.basic.obs.observation, Q0:torch.Tensor, Q1:torch.Tensor,
+	epsilon:float
+):
+	'''
+	Return: action, action_index
+	epsilon: 每个 action 有 epsilon 概率被禁用，至少保留一个 action
+	'''
+	if state is None: # Q0 is None and Q1 is None if state is None:
+		action_index:int = None # Q[i]=[0] if state[i] is None
+		action:int = 255 # reset env
+	else:
+		no_action_set = action_set_no(translate_messages_misc(state))
+
+		from random import randint
+		Q = (Q0.data + Q1.data).to('cpu') # Q.shape = [len(Q)]
+		rand_action_mask = torch.rand(Q.shape)>epsilon
+		# rand_action_mask = rand_action_mask.to(Q.device)
+		action_index = Q[rand_action_mask].argmax().item() if rand_action_mask.any() else randint(0, len(Q)-1)
+		if no_action_set == 1: # 物品栏；将位置映射到对应位置的字母
+			actions = [*state.inv_letters]+[ord('\r')] # 
+		else: # 其它情况；将位置映射到动作的 ord
+			actions = actions_list[no_action_set]
+		action = actions[action_index]
+		# print('Q sum\t%+.6f'%((Q0.data + Q1.data)[action_index].item()))
+	return action, action_index
+
+def select_action(state:nle.basic.obs.observation):
+	'player input'
+	if state is None:
+		print('game end')
+		no = None
+		action = 255
+		action_index = None
+		return action, action_index
+	from getch import Getch
+	from model.misc import actions_list, action_set_no as set_no
+	from model.glyphs import translate_messages_misc as t
+	last_no = no
+	no = set_no(t(state))
+	if no == 1:
+		actionslist = [*state.inv_letters]+[ord('\r')]
+		actions = [c for c in actionslist if c != 0]
+	else:
+		actionslist = actions_list[no]
+		actions = actionslist
+	# print available actions (keys)
+	if last_no != no or no == 1:
+		special_actions = {0:'<0>', 0x1b:'<Esc>', ord('\r'):'<CR>', 4:'<Ctrl-D>',}
+		actions_print = ''
+		for action in actions:
+			if action in special_actions.keys():
+				action = special_actions[action]
+			else:
+				action = chr(action)
+			actions_print += action + ' '
+		print(actions_print)
+	# input action
+	while True:
+		action = Getch()[0]
+		if no == 1 and actions[0] == 0:
+			action = 0
+		if action not in actions:
+			print('Invalid action.')
+		else: break
+	action_index = actionslist.index(action)
+	return action, action_index
+
+from model.memory_replay.replay.train import optimize_batch, forward_batch, train_memory_batch
+
+from nle_win.batch_nle import batch
+from model.SAR_dataset import SAR_dataset
+def train_n_batch(
+	start_epoch:int, num_epoch:int,
+	env:batch,
+	model0:DRQN, model1:DRQN,
+	loss_func,
+	optimizer0:torch.optim.Optimizer, optimizer1:torch.optim.Optimizer,
+	batch_state:List[nle.basic.obs.observation],
+	Q0:List[torch.Tensor], Q1:List[torch.Tensor],
+	RNN_STATE0:List[Tuple[torch.Tensor, torch.Tensor]], RNN_STATE1:List[Tuple[torch.Tensor, torch.Tensor]],
+	last_RNN_STATE0:List[Tuple[torch.Tensor, torch.Tensor]], last_RNN_STATE1:List[Tuple[torch.Tensor, torch.Tensor]],
+	gamma:float, penalty_still_T:float, penalty_invalid_action:float, penalty_death:float,
+	replay_memory:replay_memory_WHLR, batch_replay_memory_transition_q:List[replay_memory_WHLR.Transition_q],
+	replay_batch_size:int,
+): # ((None, None, None), (None, R1, S1), ..., (Ai, Ri, Si), (Aj, Rj, None), (None, Rk, Sk), ...)
+	assert all((
+		env.frcv.batch_size == 1,
+		len(batch_state) == env.frcv.batch_size,
+		len(Q0) == len(batch_state), len(Q0) == len(RNN_STATE0), len(RNN_STATE0) == len(last_RNN_STATE0),
+		len(Q1) == len(batch_state), len(Q1) == len(RNN_STATE1), len(RNN_STATE1) == len(last_RNN_STATE1),
+		len(batch_replay_memory_transition_q) == len(batch_state),
+	))
+	from random import randint
+	from copy import deepcopy
+	losses = [0.]*0
+	scores = [0]*0
+	replay_losses = [0.]*0
+	# from model.dry_forward import dry_forward_batch
+
+	last_batch_state_copy = [deepcopy(state) for state in batch_state] # last state 要在 step 前复制
+
+	scores_record_last_batch_state = [(int(state.blstats[20]), int(state.blstats[9])) if state is not None else (0, 0) for state in batch_state]
+	for n_ep in range(start_epoch, start_epoch+num_epoch):
+		batch_action = [select_action() for _ in range(env.frcv.batch_size)]
+		batch_action_index, batch_action = [i[1] for i in batch_action], [i[0] for i in batch_action]
+
+		scores_record_last_batch_state = [(int(state.blstats[20]), int(state.blstats[9])) if state is not None else (0, 0) for state in batch_state]
+
+		no = randint(0, 1)
+		(optimizer, model, RNN_STATE, ) = (
+			(optimizer0, model0, last_RNN_STATE0, ),
+			(optimizer1, model1, last_RNN_STATE1, ),
+		)[no]
+		# model.requires_grad_(True)
+		[Q_train], [RNN_STATE] = forward_batch(batch_state, [RNN_STATE], [model]) # 旧 state
+		del RNN_STATE
+		# model.requires_grad_(False)
+
+		observations = env.step(batch_action) # 注意 batch_state 的元素均指向 env.frcv 的成员的内存，step 会改变 batch_state
+		batch_state = [obs.obs if not obs.done else None for obs in observations] # 更新 None 状态
+		batch_reward = [obs.reward for obs in observations]
+		# 修饰 batch_reward
+		batch_reward = [reward + penalty_death if state is None # 游戏结束（基本上等于死亡），给予较大的负激励
+			else ( # 如果 T 没有变化（例如放下不存在的物品），环境不发生改变，且饥饿度不增加，判断为行动不立即生效，给予略微的负激励，防止游戏状态陷入死循环导致收敛到奇怪的地方
+				0 if state.blstats[20]!=last_scores_record[0] else penalty_still_T
+			) + ( # 如果行动非法（暂时只实现 0 输入（inv 选择 0）），给予较大的负激励
+				0 if action != 0 else penalty_invalid_action
+			) for reward, state, last_scores_record, action in zip(batch_reward, batch_state, scores_record_last_batch_state, batch_action)
+		]
+
+		[last_RNN_STATE0, last_RNN_STATE1] = [RNN_STATE0, RNN_STATE1]
+		[Q0, Q1], [RNN_STATE0, RNN_STATE1] = forward_batch(batch_state, [RNN_STATE0, RNN_STATE1], [model0, model1]) # 累积 RNN STATE
+		Q0 = [Q.detach() if Q is not None else Q for Q in Q0] # 降低显存占用
+		Q1 = [Q.detach() if Q is not None else Q for Q in Q1]
+		(next_Q_train, next_Q_eval, ) = (
+			(Q0, Q1, ),
+			(Q1, Q0, ),
+		)[no]
+		loss, sep_loss = optimize_batch(batch_action_index, batch_reward, loss_func, optimizer, Q_train, next_Q_train, next_Q_eval, gamma)
+		# loss = 0.
+
+		# memory replay using replay memory
+		batch_state_copy = [deepcopy(state) for state in batch_state]
+		replay_loss, batch_replay_memory_transition_q = train_memory_batch(
+			replay_memory, replay_batch_size,
+			last_batch_state_copy, batch_action_index, batch_reward, batch_state_copy, sep_loss, batch_replay_memory_transition_q,
+			no, model0, model1, loss_func, optimizer0, optimizer1, gamma
+		)
+		last_batch_state_copy = batch_state_copy
+		print('%8.2e %8.2e | %s'%(loss, replay_loss, bytes(batch_action).translate(bytes.maketrans(b'\xff\x1b\x04\r\x00', b'!QDN0')).decode()))
+
+		losses.append(loss)
+		replay_losses.append(replay_loss)
+		for record, state in zip(scores_record_last_batch_state[:env.frcv.batch_size], batch_state[:env.frcv.batch_size]):
+			if state is None: # 当前为终止状态，则上一状态的 blstats[20], blstats[9] 分别为 T, total score
+				scores += [n_ep, record[0], record[1]]
+
+	return batch_state, batch_replay_memory_transition_q, Q0, Q1, RNN_STATE0, RNN_STATE1, last_RNN_STATE0, last_RNN_STATE1, losses, scores, replay_losses
 
 def __main__(*,
-	nums_epoch:List[int], batch_size:int, use_gpu:bool,
-	gamma:float, epsilon_func:str, epsilon_func_globals:dict,
-	env_param:str,
+	nums_epoch:List[int], gamma:float, env_param:str,
 	penalty_still_T:float, penalty_invalid_action:float, penalty_death:float,
 	logfile:str,
 	model0_file_out:str, model1_file_out:str,
 	model0_file_in:str=None, model1_file_in:str=None,
 	loss_logfile_xz:str=None, score_logfile_xz:str=None, replay_loss_logfile_xz:str=None,
-	Learning_rate:float, replay_datasets:List[str],
+	Learning_rate:float,
 	replay_memory:replay_memory_WHLR, replay_batch_size:int,
 ):
 	'''
-	隔 num_epoch 轮 optimize 更新一次 loss|score|env 记录和日志文件，以防宕机。
+	隔 num_epoch 轮 optimize 更新一次 loss|score|env 记录和参数文件（缓存/日志？），以防宕机。
 	保存带总 epoch 数、时间戳、模型和环境参数的日志文件。
 	'''
 	from model.memory_replay.dataset.files import try_to_create_file, logfilexz_save_float, iter_tmpfile, format_time, logfilexz_load_float, logfilexz_save_int
@@ -38,30 +197,24 @@ def __main__(*,
 	assert try_to_create_file(model1_file_out)
 	tmpfile = [None, None, None, None, None]
 
-	from typing import Callable
-	epsilon_lambda:Callable[[dict, dict], bool] = eval(epsilon_func)
-	assert isinstance(epsilon_lambda, Callable) and epsilon_lambda.__code__.co_argcount==2
-
 	losses = [0.]*0
 	scores = [0]*0
 	replay_losses = [0.]*0
 
 	from torch import nn
-	device = torch.device("cuda" if use_gpu and torch.cuda.is_available() else "cpu")
+	device = torch.device("cpu")
 	from model.misc import actions_ynq, actions_normal
 	model0:DRQN = DRQN(device, len(actions_ynq), len(actions_normal))
 	model1:DRQN = DRQN(device, len(actions_ynq), len(actions_normal))
 	if model0_file_in is not None: model0.load(model0_file_in)
 	if model1_file_in is not None: model1.load(model1_file_in)
-	# model0.requires_grad_(False)
-	# model1.requires_grad_(False)
 	optimizer0 = torch.optim.Adam(model0.parameters(), lr=Learning_rate)
 	optimizer1 = torch.optim.Adam(model1.parameters(), lr=Learning_rate)
-	loss_func = nn.MSELoss(reduce=False)
+	loss_func = nn.SmoothL1Loss()
 
 	from nle_win.batch_nle.client import connect, disconnect, batch
 	connect()
-	env = batch(batch_size, env_param)
+	env = batch(1, env_param)
 
 	# opening log
 	filelog = open(logfile, 'ab+')
@@ -69,13 +222,12 @@ def __main__(*,
 		'{} time'.format(format_time()),
 		'parameters:',
 		'\tnums_epoch={}'.format(nums_epoch),
-		'\tbatch_size={}'.format(batch_size),
+		'\tbatch_size={}'.format(1),
 		'\tgamma={}'.format(gamma),
 		'\tenv_param={}'.format(env_param),
 		'\tpenalty_still_T={}'.format(penalty_still_T),
 		'\tpenalty_invalid_action={}'.format(penalty_invalid_action),
 		'\tpenalty_death={}'.format(penalty_death),
-		'\tuse_gpu={}'.format(use_gpu),
 		'\tlogfile={}'.format(logfile),
 		'\tmodel0_file_out={}'.format(model0_file_out),
 		'\tmodel1_file_out={}'.format(model1_file_out),
@@ -84,31 +236,25 @@ def __main__(*,
 		'\tloss_logfile_xz={}'.format(loss_logfile_xz),
 		'\treplay_loss_logfile_xz={}'.format(replay_loss_logfile_xz),
 		'\tscore_logfile_xz={}'.format(score_logfile_xz),
-		'\treplay_datasets={}'.format(replay_datasets),
 		'\tLearning_rate={}'.format(Learning_rate),
-		'\tepsilon_func=\'\'\'{}\'\'\''.format(epsilon_func),
-		'\tepsilon_func_globals={}'.format(epsilon_func_globals),
 		'\treplay_memory={}'.format(replay_memory),
 		'\treplay_batch_size={}'.format(replay_batch_size),
-		'\tloss_func: {}'.format(loss_func),
 		'Start.'
 	]])
 	filelog.close()
 	del filelog
 
-	replay_memory_dataset = [SAR_dataset(filename) for filename in replay_datasets]
+	batch_state:List[nle.basic.obs.observation] = [None]*(1)
 
-	batch_state:List[nle.basic.obs.observation] = [None]*(batch_size+len(replay_memory_dataset))
+	Q0:List[torch.Tensor] = [None]*(1)
+	Q1:List[torch.Tensor] = [None]*(1)
 
-	Q0:List[torch.Tensor] = [None]*(batch_size+len(replay_memory_dataset))
-	Q1:List[torch.Tensor] = [None]*(batch_size+len(replay_memory_dataset))
+	RNN_STATE0     :List[Tuple[torch.Tensor, torch.Tensor]] = [model0.initial_RNN_state()]*(1)
+	RNN_STATE1     :List[Tuple[torch.Tensor, torch.Tensor]] = [model1.initial_RNN_state()]*(1)
+	last_RNN_STATE0:List[Tuple[torch.Tensor, torch.Tensor]] = [None]*(1)
+	last_RNN_STATE1:List[Tuple[torch.Tensor, torch.Tensor]] = [None]*(1)
 
-	RNN_STATE0     :List[Tuple[torch.Tensor, torch.Tensor]] = [model0.initial_RNN_state()]*(batch_size+len(replay_memory_dataset))
-	RNN_STATE1     :List[Tuple[torch.Tensor, torch.Tensor]] = [model1.initial_RNN_state()]*(batch_size+len(replay_memory_dataset))
-	last_RNN_STATE0:List[Tuple[torch.Tensor, torch.Tensor]] = [None]*(batch_size+len(replay_memory_dataset))
-	last_RNN_STATE1:List[Tuple[torch.Tensor, torch.Tensor]] = [None]*(batch_size+len(replay_memory_dataset))
-
-	batch_replay_memory_transition_q:List[replay_memory_WHLR.Transition_q] = [None]*(batch_size+len(replay_memory_dataset))
+	batch_replay_memory_transition_q:List[replay_memory_WHLR.Transition_q] = [None]*(1)
 
 	start_epoch = 0
 	# RNN_test = [None, None]
@@ -126,7 +272,6 @@ def __main__(*,
 			Q0, Q1, # Q[i] will not be visited if state[i] is None
 			RNN_STATE0, RNN_STATE1, last_RNN_STATE0, last_RNN_STATE1,
 			gamma, penalty_still_T, penalty_invalid_action, penalty_death,
-			epsilon_lambda, epsilon_func_globals, replay_memory_dataset,
 			replay_memory, batch_replay_memory_transition_q, replay_batch_size,
 		)
 		# after, _ = model0._forward_y_seq([test_state])
@@ -147,7 +292,7 @@ def __main__(*,
 		# save tmpfile, update logflie
 		import os
 		try:
-			datdir = os.path.dirname(os.path.abspath(__file__))+'/../../dat'
+			datdir = os.path.dirname(os.path.abspath(__file__))+'/../../../dat'
 		except:
 			datdir = os.getcwd()+'/dat'
 		datdir = os.path.normpath(datdir) + '\\' # DOS: '\\'
@@ -294,68 +439,18 @@ def __main__(*,
 
 if __name__ == '__main__':
 	from model import setting
-	batch_size = 128
 	num_epoch = 128
 	nums_epoch = [num_epoch]*128
-	use_gpu = True
 	model_file_tag = 'DRQN'
-	replay_memory=replay_memory_WHLR(256, 4, 4)
-	replay_batch_size=32
-
-	if use_gpu: torch.cuda.set_per_process_memory_fraction(1-1/16.)
-	# torch.autograd.set_detect_anomaly(True) # DEBUG
-
-	epsilon_func='''
-lambda LOCAL, GLOBAL: [
-# 如果分数有所变化或经过一定间隔，渲染 game#0
-	GLOBAL['nle_win.batch_nle.EXEC']('env.render(0)') if ( # 渲染
-		LOCAL['states'][0] is not None and ( # 可以渲染
-			LOCAL['game_no'] == 0 and ( # game#0
-				LOCAL['n_ep']%10==0 or # 一定间隔
-				LOCAL['last_scores'][0][1] != LOCAL['states'][0].blstats[9] # 分数发生变化
-			)
-		)
-	) else None,
-# 防止过热
-	# GLOBAL['time.sleep'](1) if LOCAL['game_no']==0 else None,
-# game#0 不随机，其余 ε-greedy
-	GLOBAL[0]['EPS_BASE'] + (0 if LOCAL['game_no']==0 else sum(
-			EPS_INCR_DECAY[0] * GLOBAL['math.exp'](-LOCAL['n_ep']/EPS_INCR_DECAY[1])
-			for EPS_INCR_DECAY in GLOBAL[0]['EPS_INCR_DECAY_LIST']
-		)
-	)
-][-1]
-'''# LOCAL: 形式参数、变量
-# GLOBAL['RENDER'](
-# 	kwargs['n_ep'], GLOBAL['get_hour'](GLOBAL['time.strftime']), GLOBAL['nle_win.batch_nle.EXEC'],
-# ), # function 2
-	from math import exp
-	from random import random
-	from time import strftime
-	from nle_win.batch_nle import EXEC
-	from time import sleep
-	epsilon_func_globals = {
-		'math.exp':exp,
-		'random.random':random,
-		'time.strftime':strftime,
-		'nle_win.batch_nle.EXEC':EXEC,
-		'time.sleep':sleep,
-		0:{ # const_variables
-			'EPS_BASE':.05,
-			'EPS_INCR_DECAY_LIST':[(0.25, 500), (0.25, 5000),]
-		},
-	}
-	del exp, EXEC, strftime, random
-	# print(eval(epsilon_func)(50000, epsilon_func_globals))
-	# print([epsilon_func({'n_ep':0, 'game_no':game_no, 'last_scores':[(0, 0)]*8, 'states':[None]*8,}, epsilon_func_globals) for game_no in range(8)])
-	# exit()
+	replay_memory=replay_memory_WHLR(32, 4, 4)
+	replay_batch_size=4
 
 	model0_file_in = None
 	model1_file_in = None
 
 	import os
 	try:
-		datdir = os.path.dirname(os.path.abspath(__file__))+'/../../dat'
+		datdir = os.path.dirname(os.path.abspath(__file__))+'/../../../dat'
 	except:
 		datdir = os.getcwd()+'/dat'
 	datdir = os.path.normpath(datdir) + '\\' # datdir 为当前目录的 /dat/
@@ -389,21 +484,15 @@ lambda LOCAL, GLOBAL: [
 	del curtime, format_time
 
 	models = __main__(
-		nums_epoch=nums_epoch, batch_size=batch_size,
+		nums_epoch=nums_epoch,
 		gamma=setting.gamma, env_param='character="{}", savedir=None'.format(setting.character),
 		penalty_still_T=setting.penalty_still_T,
 		penalty_invalid_action=setting.penalty_invalid_action,
 		penalty_death=setting.penalty_death,
 		logfile=logfile,
-		use_gpu=use_gpu, Learning_rate=setting.lr,
+		Learning_rate=setting.lr,
 		model0_file_out=model0_file_out, model1_file_out=model1_file_out,
 		loss_logfile_xz=loss_logfile_xz, score_logfile_xz=score_logfile_xz, replay_loss_logfile_xz=replay_loss_logfile_xz,
 		model0_file_in=model0_file_in, model1_file_in=model1_file_in,
-		epsilon_func=epsilon_func, epsilon_func_globals=epsilon_func_globals,
-		replay_datasets=[
-			# 'D:\\words\\RL\\project\\nle_model\\model\\memory_replay\\dataset\\dat\\0-Val-Hum-Fem-Law.ARS.dat.xz',
-			# 'D:\\words\\RL\\project\\nle_model\\model\\memory_replay\\dataset\\dat\\1-Val-Hum-Fem-Law.ARS.dat.xz',
-			# 'D:\\words\\RL\\project\\nle_model\\model\\memory_replay\\dataset\\dat\\2-Val-Hum-Fem-Law.ARS.dat.xz',
-		],
 		replay_memory=replay_memory, replay_batch_size=replay_batch_size,
 	)

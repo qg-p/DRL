@@ -8,6 +8,69 @@ from model.glyphs import translate_glyph, translate_glyphs, translate_inv, trans
 import torch
 from torch import nn
 
+num_workers=8
+from concurrent.futures import ThreadPoolExecutor
+thread_pool_executor = ThreadPoolExecutor(max_workers=num_workers)
+
+from typing import List
+def preprocess(obs_batch:List[nle.basic.obs.observation], device:torch.device):
+	def batch_split(n:int):
+		L = len(obs_batch)
+		r = [L//n]*n
+		for i in range(L%n): r[i] += 1
+		i, a = 0, [0]
+		for r in r:
+			i += r
+			a.append(i)
+		r = [obs_batch[i:j] for i, j in zip(a[:-1], a[1:])]
+		return r
+	if len(obs_batch)>=num_workers: # 否则效率较低
+		works = [thread_pool_executor.submit(preprocess_single, split_batch) for split_batch in batch_split(num_workers)]
+		results = [work.result() for work in works]
+	else:
+		results = [preprocess_single(obs_batch)]
+	map_batch, surroundings_batch, blstats_batch, inv_batch, misc_batch = results[0]
+	for map_batch_result, surroundings_batch_result, blstats_batch_result, inv_batch_result, misc_batch_result in results[1:]:
+		map_batch += map_batch_result
+		surroundings_batch += surroundings_batch_result
+		blstats_batch += blstats_batch_result
+		inv_batch += inv_batch_result
+		misc_batch += misc_batch_result
+
+	map_batch:torch.Tensor = torch.tensor(map_batch, dtype=torch.float, device=device)
+	surroundings_batch:torch.Tensor = torch.tensor(surroundings_batch, dtype=torch.float, device=device)
+	blstats_batch:torch.Tensor = torch.tensor(blstats_batch, dtype=torch.float, device=device)
+	inv_batch:torch.Tensor = torch.tensor(inv_batch, dtype=torch.float, device=device)
+	return map_batch, surroundings_batch, blstats_batch, inv_batch, misc_batch
+
+def preprocess_single(obs_batch:List[nle.basic.obs.observation]):
+	default_glyph = 2359 # ' '
+	default_translation = translate_glyph(default_glyph)
+	batch_size = len(obs_batch)
+	map_batch = [None] * batch_size
+	surroundings_batch = [None] * batch_size
+	blstats_batch = [None] * batch_size
+	misc_batch = [[0]] * batch_size
+	inv_batch = [None] * batch_size
+
+	for batch_i, obs in enumerate(obs_batch):
+		misc_batch[batch_i] = translate_messages_misc(obs)
+		inv_batch[batch_i] = translate_inv(obs)
+		blstats_batch[batch_i] = obs.blstats
+		map_4chnl = translate_glyphs(obs) # map in 4 channels
+		map_batch[batch_i] = map_4chnl.tolist()
+		srdng5x5_4chnl = [[[int(default_translation[0])]*5]*5, [[int(default_translation[1])]*5]*5, [[int(default_translation[2])]*5]*5, [[int(default_translation[3])]*5]*5]
+		y, x = obs.tty_cursor; y -= 1
+		for i in range(max(0, y-2), min(map_4chnl.shape[1], y+3)): # shape: (4, 21, 79,)
+			for j in range(max(0, x-2), min(map_4chnl.shape[2], x+3)):
+				srdng5x5_4chnl[0][i-(y-2)][j-(x-2)] = int(map_4chnl[0][i][j])
+				srdng5x5_4chnl[1][i-(y-2)][j-(x-2)] = int(map_4chnl[1][i][j])
+				srdng5x5_4chnl[2][i-(y-2)][j-(x-2)] = int(map_4chnl[2][i][j])
+				srdng5x5_4chnl[3][i-(y-2)][j-(x-2)] = int(map_4chnl[3][i][j])
+		surroundings_batch[batch_i] = srdng5x5_4chnl
+
+	return map_batch, surroundings_batch, blstats_batch, inv_batch, misc_batch
+
 class Bottleneck(nn.Module):
 	def __init__(self, layers:list=None) -> None:
 		super().__init__()
@@ -235,38 +298,6 @@ class DRQN(nn.Module):
 	from typing import List, Tuple
 	def _forward_y_seq(self, obs_batch:List[nle.basic.obs.observation]):
 		''' output: Q.y(obs) '''
-		from typing import List
-		def preprocess(obs_batch:List[nle.basic.obs.observation], device:torch.device):
-			default_glyph = 2359 # ' '
-			default_translation = translate_glyph(default_glyph)
-			batch_size = len(obs_batch)
-			map_batch = [None] * batch_size
-			surroundings_batch = [None] * batch_size
-			blstats_batch = [None] * batch_size
-			misc_batch = [[0]] * batch_size
-			inv_batch = [None] * batch_size
-
-			for batch_i, obs in enumerate(obs_batch):
-				misc_batch[batch_i] = translate_messages_misc(obs)
-				inv_batch[batch_i] = translate_inv(obs)
-				blstats_batch[batch_i] = obs.blstats
-				map_4chnl = translate_glyphs(obs) # map in 4 channels
-				map_batch[batch_i] = map_4chnl.tolist()
-				srdng5x5_4chnl = [[[int(default_translation[0])]*5]*5, [[int(default_translation[1])]*5]*5, [[int(default_translation[2])]*5]*5, [[int(default_translation[3])]*5]*5]
-				y, x = obs.tty_cursor; y -= 1
-				for i in range(max(0, y-2), min(map_4chnl.shape[1], y+3)): # shape: (4, 21, 79,)
-					for j in range(max(0, x-2), min(map_4chnl.shape[2], x+3)):
-						srdng5x5_4chnl[0][i-(y-2)][j-(x-2)] = int(map_4chnl[0][i][j])
-						srdng5x5_4chnl[1][i-(y-2)][j-(x-2)] = int(map_4chnl[1][i][j])
-						srdng5x5_4chnl[2][i-(y-2)][j-(x-2)] = int(map_4chnl[2][i][j])
-						srdng5x5_4chnl[3][i-(y-2)][j-(x-2)] = int(map_4chnl[3][i][j])
-				surroundings_batch[batch_i] = srdng5x5_4chnl
-
-			map_batch:torch.Tensor = torch.tensor(map_batch, dtype=torch.float, device=device)
-			surroundings_batch:torch.Tensor = torch.tensor(surroundings_batch, dtype=torch.float, device=device)
-			blstats_batch:torch.Tensor = torch.tensor(blstats_batch, dtype=torch.float, device=device)
-			inv_batch:torch.Tensor = torch.tensor(inv_batch, dtype=torch.float, device=device)
-			return map_batch, surroundings_batch, blstats_batch, inv_batch, misc_batch
 		map_4, srdng5x5_4, blstat_26, inv_55_6, misc_6 = preprocess(obs_batch, self.device)
 
 		a = self.Q[0][0][0](map_4)

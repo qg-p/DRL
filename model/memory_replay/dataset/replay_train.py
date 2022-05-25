@@ -1,6 +1,6 @@
 if __name__=='__main__':
 	import os, sys
-	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/../..'))
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/../../..'))
 	del os, sys
 
 from model.memory_replay.dataset.files import format_time

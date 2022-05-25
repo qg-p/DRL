@@ -1,6 +1,6 @@
 if __name__=='__main__':
 	import os, sys
-	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/../../..'))
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/..'))
 	del os, sys
 from model.DRQN import nle, torch, DRQN, action_set_no, translate_messages_misc, actions_list
 
@@ -47,19 +47,14 @@ def optimize_batch(
 	in this case,
 		Q+(S)[A] -> R + γ Q+(next_S)[argmax<a>(Q-(next_S)[a])]
 	and Q+(S) = 0 if S is None
-	return:
-		total loss, [0 if q_train[i] is None else separated loss[i]]
 	'''
 	p, y, r = [], [], []
-	nf_q_train_mask = [] # q_train[i] is not None
 	for q_train, A, next_q_train, next_q_eval, R in zip(Q_train, batch_action_index, next_Q_train, next_Q_eval, batch_reward):
-		nf_q_train_mask.append(q_train is not None)
 		if q_train is not None:
 			p.append(q_train[A])
 			y.append(next_q_train[next_q_eval.argmax()].item() if next_q_train is not None else 0.) # 终止状态 Q 为 0
 			r.append(R)
-	sep_loss = torch.zeros(len(Q_train))
-	if not len(p): return 0., [i.item() for i in sep_loss]
+	if not len(p): return 0.
 	p = torch.stack(p) # prediction
 	y = torch.tensor(y, device=p.device)
 	y = torch.tensor(r, device=p.device) + gamma * y
@@ -73,11 +68,7 @@ def optimize_batch(
 	loss.backward()
 	optimizer.step()
 
-	nf_q_train_mask = torch.tensor(nf_q_train_mask)
-	p = p.detach().to('cpu')
-	y = y.to('cpu')
-	sep_loss[nf_q_train_mask] = torch.stack([loss_func(p_, y_) for p_, y_ in zip(p, y)])
-	return loss.item(), [i.item() for i in sep_loss]
+	return loss.item()
 
 def forward_batch(
 	batch_state:List[nle.basic.obs.observation],
@@ -109,63 +100,6 @@ def forward_batch(
 				j += 1
 	return RETURN_Q, RETURN_RNN_STATE
 
-from model.memory_replay.replay.replay_memory import replay_memory_WHLR
-
-def memory_push_sample(
-	replay_memory:replay_memory_WHLR, replay_batch_size:int,
-	last_batch_state:List[nle.basic.obs.observation], batch_action_index:List[int], batch_reward:List[float], batch_state:List[nle.basic.obs.observation],
-	sep_loss:List[float], batch_replay_memory_transition_q:List[replay_memory_WHLR.Transition_q]
-):#	0: call
-	'''
-	1: update memory
-	2: sample memory
-	3: return (hist batch state sequence, batch state, new batch transition q)
-	'''
-	batch_replay_memory_transition_q = [
-		replay_memory.push(last_state, action_index, reward, next_state, loss, transition_q)
-		for last_state, action_index, reward, next_state, loss, transition_q in zip(last_batch_state, batch_action_index, batch_reward, batch_state, sep_loss, batch_replay_memory_transition_q)
-	]
-	replay_sample = replay_memory.sample(replay_batch_size)
-	memory_batch_hist_state = [[*state] for state in zip(*[sample.queue for sample in replay_sample])] # transpose into array: [len_queue][batch_size]
-	memory_batch_action_index = [sample.data.action_index for sample in replay_sample]
-	memory_batch_reward = [sample.data.reward for sample in replay_sample]
-	memory_batch_state = [sample.data.state for sample in replay_sample]
-	return replay_sample, (memory_batch_hist_state, memory_batch_action_index, memory_batch_reward, memory_batch_state), batch_replay_memory_transition_q
-
-def train_memory_batch(
-	replay_memory:replay_memory_WHLR, replay_batch_size:int,
-	last_batch_state_copy:List[nle.basic.obs.observation], batch_action_index:List[int], batch_reward:List[float], batch_state_copy:List[nle.basic.obs.observation],
-	sep_loss:List[float], batch_replay_memory_transition_q:List[replay_memory_WHLR.Transition_q],
-	no:int, model0:DRQN, model1:DRQN, loss_func, optimizer0:torch.optim.Optimizer, optimizer1:torch.optim.Optimizer, gamma:float,
-):
-	# push memory, sample memory
-	(	replay_sample,
-		(memory_batch_hist_state, memory_batch_action_index, memory_batch_reward, memory_batch_state),
-		batch_replay_memory_transition_q
-	) = memory_push_sample(
-		replay_memory, replay_batch_size,
-		last_batch_state_copy, batch_action_index, batch_reward, batch_state_copy, sep_loss, batch_replay_memory_transition_q
-	)
-	# forward Q_train
-	RNN_STATE0, RNN_STATE1 = [model0.initial_RNN_state()]*replay_batch_size, [model1.initial_RNN_state()]*replay_batch_size
-	for memory_batch_last_state in memory_batch_hist_state:
-		[Q0, Q1], [RNN_STATE0, RNN_STATE1] = forward_batch(memory_batch_last_state, [RNN_STATE0, RNN_STATE1], [model0, model1])
-	Q_train = [Q0, Q1][no]
-	# forward next_Q_train, next_Q_eval
-	[Q0, Q1], [RNN_STATE0, RNN_STATE1] = forward_batch(memory_batch_state, [RNN_STATE0, RNN_STATE1], [model0, model1])
-	del RNN_STATE0, RNN_STATE1
-	Q0 = [Q.detach() if Q is not None else Q for Q in Q0] # 降低显存占用
-	Q1 = [Q.detach() if Q is not None else Q for Q in Q1]
-	(next_Q_train, next_Q_eval, optimizer) = (
-		(Q0, Q1, optimizer0),
-		(Q1, Q0, optimizer1),
-	)[no]
-	# backward
-	replay_loss, replay_sep_loss = optimize_batch(memory_batch_action_index, memory_batch_reward, loss_func, optimizer, Q_train, next_Q_train, next_Q_eval, gamma)
-	# update memory loss
-	for loss, transition_q in zip(replay_sep_loss, replay_sample):
-		transition_q.step(loss)
-	return replay_loss, batch_replay_memory_transition_q
 
 from nle_win.batch_nle import batch
 from model.SAR_dataset import SAR_dataset
@@ -182,23 +116,16 @@ def train_n_batch(
 	gamma:float, penalty_still_T:float, penalty_invalid_action:float, penalty_death:float,
 	epsilon_function:Callable[[dict, dict], bool], epsilon_function_globals:dict,
 	replay_dataset:List[SAR_dataset],
-	replay_memory:replay_memory_WHLR, batch_replay_memory_transition_q:List[replay_memory_WHLR.Transition_q],
-	replay_batch_size:int,
 ): # ((None, None, None), (None, R1, S1), ..., (Ai, Ri, Si), (Aj, Rj, None), (None, Rk, Sk), ...)
 	assert all((
 		len(batch_state) == env.frcv.batch_size + len(replay_dataset),
 		len(Q0) == len(batch_state), len(Q0) == len(RNN_STATE0), len(RNN_STATE0) == len(last_RNN_STATE0),
 		len(Q1) == len(batch_state), len(Q1) == len(RNN_STATE1), len(RNN_STATE1) == len(last_RNN_STATE1),
-		len(batch_replay_memory_transition_q) == len(batch_state),
 	))
 	from random import randint
-	from copy import deepcopy
 	losses = [0.]*0
 	scores = [0]*0
-	replay_losses = [0.]*0
 	# from model.dry_forward import dry_forward_batch
-
-	last_batch_state_copy = [deepcopy(state) for state in batch_state] # last state 要在 step 前复制
 
 	scores_record_last_batch_state = [(int(state.blstats[20]), int(state.blstats[9])) if state is not None else (0, 0) for state in batch_state]
 	for n_ep in range(start_epoch, start_epoch+num_epoch):
@@ -215,6 +142,7 @@ def train_n_batch(
 		] # 前 batch_size 个 env 的决策
 		batch_action_index, batch_action = [i[1] for i in batch_action], [i[0] for i in batch_action]
 
+		# copy_state(last_batch_state, batch_state, last_batch_state_buffer) # 要在 step 前复制
 		scores_record_last_batch_state = [(int(state.blstats[20]), int(state.blstats[9])) if state is not None else (0, 0) for state in batch_state]
 
 		no = randint(0, 1)
@@ -237,11 +165,13 @@ def train_n_batch(
 		batch_state += [obs.state for obs in observations]
 		batch_reward += [obs.reward for obs in observations]
 		# 修饰 batch_reward
-		batch_reward = [reward + penalty_death if state is None # 游戏结束（基本上等于死亡），给予较大的负激励
+		batch_reward = [reward + (
+			penalty_death if state is None # 游戏结束（基本上等于死亡），给予较大的负激励
 			else ( # 如果 T 没有变化（例如放下不存在的物品），环境不发生改变，且饥饿度不增加，判断为行动不立即生效，给予略微的负激励，防止游戏状态陷入死循环导致收敛到奇怪的地方
-				0 if state.blstats[20]!=last_scores_record[0] else penalty_still_T
-			) + ( # 如果行动非法（暂时只实现 0 输入（inv 选择 0）），给予较大的负激励
-				0 if action != 0 else penalty_invalid_action
+					0 if state.blstats[20]!=last_scores_record[0] else penalty_still_T
+				) + ( # 如果行动非法（暂时只实现 0 输入（inv 选择 0）），给予较大的负激励
+					0 if action != 0 else penalty_invalid_action
+				)
 			) for reward, state, last_scores_record, action in zip(batch_reward, batch_state, scores_record_last_batch_state, batch_action)
 		]
 
@@ -253,23 +183,13 @@ def train_n_batch(
 			(Q0, Q1, ),
 			(Q1, Q0, ),
 		)[no]
-		loss, sep_loss = optimize_batch(batch_action_index, batch_reward, loss_func, optimizer, Q_train, next_Q_train, next_Q_eval, gamma)
+		loss = optimize_batch(batch_action_index, batch_reward, loss_func, optimizer, Q_train, next_Q_train, next_Q_eval, gamma)
 		# loss = 0.
-
-		# memory replay using replay memory
-		batch_state_copy = [deepcopy(state) for state in batch_state]
-		replay_loss, batch_replay_memory_transition_q = train_memory_batch(
-			replay_memory, replay_batch_size,
-			last_batch_state_copy, batch_action_index, batch_reward, batch_state_copy, sep_loss, batch_replay_memory_transition_q,
-			no, model0, model1, loss_func, optimizer0, optimizer1, gamma
-		)
-		last_batch_state_copy = batch_state_copy
-		print('%8.2e %8.2e | %s'%(loss, replay_loss, bytes(batch_action).translate(bytes.maketrans(b'\xff\x1b\x04\r\x00', b'!QDN0')).decode()))
+		print('%10.4e | %s'%(loss, bytes(batch_action).translate(bytes.maketrans(b'\xff\x1b\x04\r\x00', b'!QDN0')).decode()))
 
 		losses.append(loss)
-		replay_losses.append(replay_loss)
 		for record, state in zip(scores_record_last_batch_state[:env.frcv.batch_size], batch_state[:env.frcv.batch_size]):
 			if state is None: # 当前为终止状态，则上一状态的 blstats[20], blstats[9] 分别为 T, total score
 				scores += [n_ep, record[0], record[1]]
 
-	return batch_state, batch_replay_memory_transition_q, Q0, Q1, RNN_STATE0, RNN_STATE1, last_RNN_STATE0, last_RNN_STATE1, losses, scores, replay_losses
+	return batch_state, Q0, Q1, RNN_STATE0, RNN_STATE1, last_RNN_STATE0, last_RNN_STATE1, losses, scores
