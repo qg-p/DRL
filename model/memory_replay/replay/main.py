@@ -57,7 +57,7 @@ def __main__(*,
 	# model1.requires_grad_(False)
 	optimizer0 = torch.optim.Adam(model0.parameters(), lr=Learning_rate)
 	optimizer1 = torch.optim.Adam(model1.parameters(), lr=Learning_rate)
-	loss_func = nn.MSELoss(reduce=False)
+	loss_func = nn.MSELoss()
 
 	from nle_win.batch_nle.client import connect, disconnect, batch
 	connect()
@@ -91,6 +91,7 @@ def __main__(*,
 		'\treplay_memory={}'.format(replay_memory),
 		'\treplay_batch_size={}'.format(replay_batch_size),
 		'\tloss_func: {}'.format(loss_func),
+		'\toptimizer: {}'.format(optimizer0.__class__),
 		'Start.'
 	]])
 	filelog.close()
@@ -295,12 +296,12 @@ def __main__(*,
 if __name__ == '__main__':
 	from model import setting
 	batch_size = 128
-	num_epoch = 128
-	nums_epoch = [num_epoch]*128
+	num_epoch = 64
+	nums_epoch = [num_epoch]*64
 	use_gpu = True
 	model_file_tag = 'DRQN'
-	replay_memory=replay_memory_WHLR(256, 4, 4)
-	replay_batch_size=32
+	replay_memory = replay_memory_WHLR(128, 1, 16)
+	replay_batch_size = 32
 
 	if use_gpu: torch.cuda.set_per_process_memory_fraction(1-1/16.)
 	# torch.autograd.set_detect_anomaly(True) # DEBUG
@@ -310,16 +311,16 @@ lambda LOCAL, GLOBAL: [
 # 如果分数有所变化或经过一定间隔，渲染 game#0
 	GLOBAL['nle_win.batch_nle.EXEC']('env.render(0)') if ( # 渲染
 		LOCAL['states'][0] is not None and ( # 可以渲染
-			LOCAL['game_no'] == 0 and ( # game#0
-				LOCAL['n_ep']%10==0 or # 一定间隔
-				LOCAL['last_scores'][0][1] != LOCAL['states'][0].blstats[9] # 分数发生变化
-			)
+			LOCAL['game_no'] == 0 # and ( # game#0
+				# LOCAL['n_ep']%10==0 or # 一定间隔
+				# LOCAL['last_scores'][0][1] != LOCAL['states'][0].blstats[9] # 分数发生变化
+			# )
 		)
 	) else None,
 # 防止过热
 	# GLOBAL['time.sleep'](1) if LOCAL['game_no']==0 else None,
 # game#0 不随机，其余 ε-greedy
-	GLOBAL[0]['EPS_BASE'] + (0 if LOCAL['game_no']==0 else sum(
+	0 if LOCAL['game_no']==0 else (GLOBAL[0]['EPS_BASE'] + sum(
 			EPS_INCR_DECAY[0] * GLOBAL['math.exp'](-LOCAL['n_ep']/EPS_INCR_DECAY[1])
 			for EPS_INCR_DECAY in GLOBAL[0]['EPS_INCR_DECAY_LIST']
 		)
@@ -341,7 +342,7 @@ lambda LOCAL, GLOBAL: [
 		'nle_win.batch_nle.EXEC':EXEC,
 		'time.sleep':sleep,
 		0:{ # const_variables
-			'EPS_BASE':.05,
+			'EPS_BASE':.75,
 			'EPS_INCR_DECAY_LIST':[(0.25, 500), (0.25, 5000),]
 		},
 	}

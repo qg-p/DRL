@@ -1,3 +1,8 @@
+if __name__=='__main__':
+	import os, sys
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/..'))
+	del os, sys
+
 from model.memory_replay.dataset.files import logfilexz_load_float
 from matplotlib import pyplot as plt
 

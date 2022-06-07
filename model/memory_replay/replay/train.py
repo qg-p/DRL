@@ -267,7 +267,15 @@ def train_n_batch(
 			no, model0, model1, loss_func, optimizer0, optimizer1, gamma
 		)
 		last_batch_state_copy = batch_state_copy
-		print('%8.2e %8.2e | %s'%(loss, replay_loss, bytes(batch_action).translate(bytes.maketrans(b'\xff\x1b\x04\r\x00', b'!QDN0')).decode()))
+		print('%8.2e %8.2e | %s %6.2f %6.2f %6.2f'%(
+			loss, replay_loss,
+			bytes(batch_action).translate(bytes.maketrans(b'\xff\x1b\x04\r\x00', b'!QDN0')).decode(),
+			*((0, 0, 0) if Q_train[0] is None else(
+				Q_train[0][batch_action_index[0]].item(),
+				batch_reward[0],
+				(next_Q_train[0][next_Q_eval[0].argmax()].item() if next_Q_train[0] is not None else 0)*gamma + batch_reward[0] - Q_train[0][batch_action_index[0]].item()
+			))
+		))
 
 		losses.append(loss)
 		replay_losses.append(replay_loss)

@@ -1,3 +1,8 @@
+if __name__=='__main__':
+	import os, sys
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/..'))
+	del os, sys
+
 def test2():
 	print('test srv step rate')
 	from time import perf_counter as sec

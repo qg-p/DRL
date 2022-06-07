@@ -1,12 +1,15 @@
 import torch
 from torch import nn
-loss_func = nn.SmoothL1Loss(reduce=True)
+loss_func = nn.MSELoss(reduce=False)
+# def loss_func(x, y):
+# 	x = x-y
+# 	return torch.min(torch.square(x)/2, torch.abs(x))
 
 model = nn.Sequential(
 	nn.Linear(1, 4), nn.Tanh(),
-	nn.Linear(4, 8), nn.ReLU(),
-	nn.Linear(8, 8), nn.ReLU(),
-	nn.Linear(8, 8), nn.ReLU(),
+	nn.Linear(4, 8), nn.LeakyReLU(),
+	nn.Linear(8, 8), nn.LeakyReLU(),
+	nn.Linear(8, 8), nn.LeakyReLU(),
 	nn.Linear(8, 1),
 )
 
@@ -24,9 +27,9 @@ losses = [0.]*0
 for i in range(500):
 	print('epoch %d'%(i), end='\r')
 	predict:torch.Tensor = model(x)
-	loss_vector:torch.Tensor = loss_func(predict, label)
+	loss_vector:torch.Tensor = loss_func(predict, label+torch.mul(torch.randn(label.shape)*0.1, label-predict.data))
 	optimizer.zero_grad()
-	loss_vector.backward()
+	loss_vector.sum().backward()
 	optimizer.step()
 	losses.append(loss_vector.data.mean())
 print()

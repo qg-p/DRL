@@ -1,3 +1,8 @@
+if __name__=='__main__':
+	import os, sys
+	sys.path.append(os.path.normpath(os.path.dirname(os.path.abspath(__file__))+'/..'))
+	del os, sys
+
 from nle_win.client import step_primitive
 
 
